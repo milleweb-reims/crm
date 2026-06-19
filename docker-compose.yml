@@ -6,7 +6,10 @@ services:
     env_file: .env.production
     networks:
       - reverse-proxy-net
+      - mongo-net
 
 networks:
   reverse-proxy-net:
+    external: true
+  mongo-net:
     external: true
