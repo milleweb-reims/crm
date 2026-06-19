@@ -1,0 +1,12 @@
+services:
+  web:
+    build: .
+    container_name: crm_web
+    restart: always
+    env_file: .env.production
+    networks:
+      - reverse-proxy-net
+
+networks:
+  reverse-proxy-net:
+    external: true
