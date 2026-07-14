@@ -20,8 +20,9 @@ import {
   UserCheck,
   Plus,
   Send,
+  BookOpen,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
 import { ActivityTimeline } from "@/components/activity-timeline";
@@ -59,6 +60,37 @@ function canTransition(from: ProspectStatus, to: ProspectStatus) {
   if (to === "pas_interesse") return true;
   if (from === "pas_interesse") return to === "prospect";
   return STATUS_FLOW.indexOf(to) <= STATUS_FLOW.indexOf(from) + 1;
+}
+
+const DAY_LABELS_FR: Record<string, string> = {
+  monday: "Lundi",
+  tuesday: "Mardi",
+  wednesday: "Mercredi",
+  thursday: "Jeudi",
+  friday: "Vendredi",
+  saturday: "Samedi",
+  sunday: "Dimanche",
+};
+
+// Convertit les valeurs Google du type "7-am-11-pm", "7:30-am-11-pm" ou
+// "730-am-6-pm" (minutes sans deux-points) en "7h – 23h" / "7h30 – 18h".
+function formatHoursFr(raw: string): string {
+  const lower = raw.toLowerCase().trim();
+  if (lower === "closed") return "Fermé";
+  if (lower === "open-24-hours" || lower === "open 24 hours") return "24h/24";
+
+  const toFr = (h: number, min: string | undefined, meridiem: string) => {
+    let hour = h % 12;
+    if (meridiem === "pm") hour += 12;
+    return `${hour}h${min ?? ""}`;
+  };
+
+  const match = lower.match(
+    /^(\d{1,2})(?::?(\d{2}))?-(am|pm)-(\d{1,2})(?::?(\d{2}))?-(am|pm)$/
+  );
+  if (!match) return raw;
+  const [, h1, m1, mer1, h2, m2, mer2] = match;
+  return `${toFr(Number(h1), m1, mer1!)} – ${toFr(Number(h2), m2, mer2!)}`;
 }
 
 const statusPillStyles: Record<ProspectStatus, { active: string; dot: string }> = {
@@ -502,6 +534,16 @@ export default function ProspectDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="https://docs.google.com/document/d/1uuppPcAJ-63h_kso9c-UjskhMWzQF7p4-cfzedbCY0M/edit?usp=sharing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(buttonVariants({ variant: "outline" }), "h-9")}
+            data-test="sales-script"
+          >
+            <BookOpen className="h-4 w-4" />
+            Script de vente
+          </a>
           {isAdmin && (
             <select
               value={assignedId ?? ""}
@@ -636,6 +678,7 @@ export default function ProspectDetailPage() {
         <PaymentLinkCard
           prospect={prospect}
           onUpdated={fetchData}
+          canEditQuote={isAdmin}
           className="h-full"
         />
           <Card className="h-full">
@@ -793,10 +836,16 @@ export default function ProspectDetailPage() {
                 <div className="space-y-1.5 text-sm">
                   {Object.entries(prospect.openingHours)
                     .filter(([, hours]) => hours && String(hours) !== "null")
+                    .sort(([a], [b]) => {
+                      const order = Object.keys(DAY_LABELS_FR);
+                      return order.indexOf(a.toLowerCase()) - order.indexOf(b.toLowerCase());
+                    })
                     .map(([day, hours]) => (
                       <div key={day} className="flex justify-between gap-3">
-                        <span className="text-muted-foreground capitalize">{day}</span>
-                        <span className="text-right">{String(hours)}</span>
+                        <span className="text-muted-foreground capitalize">
+                          {DAY_LABELS_FR[day.toLowerCase()] ?? day}
+                        </span>
+                        <span className="text-right">{formatHoursFr(String(hours))}</span>
                       </div>
                     ))}
                 </div>
