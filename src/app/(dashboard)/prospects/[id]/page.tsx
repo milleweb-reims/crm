@@ -28,6 +28,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { PromptGenerator } from "@/components/prompt-generator";
 import { PaymentLinkCard } from "@/components/payment-link-card";
+import { SalesScript } from "@/components/sales-script";
 import { cn } from "@/lib/utils";
 import { PROSPECT_STATUSES, type IProspect, type IUser, type ProspectStatus, type ActivityType } from "@/types";
 import { LOCK_HEARTBEAT_MS, getLockHolder } from "@/lib/lock";
@@ -61,12 +62,6 @@ function canTransition(from: ProspectStatus, to: ProspectStatus) {
   if (from === "pas_interesse") return to === "prospect";
   return STATUS_FLOW.indexOf(to) <= STATUS_FLOW.indexOf(from) + 1;
 }
-
-// Script de vente : affiché dans une modale via l'aperçu Google Docs (le mode
-// /edit refuse l'iframe, /preview l'autorise pour un doc partagé par lien)
-const SALES_SCRIPT_DOC_ID = "1uuppPcAJ-63h_kso9c-UjskhMWzQF7p4-cfzedbCY0M";
-const SALES_SCRIPT_PREVIEW_URL = `https://docs.google.com/document/d/${SALES_SCRIPT_DOC_ID}/preview`;
-const SALES_SCRIPT_EDIT_URL = `https://docs.google.com/document/d/${SALES_SCRIPT_DOC_ID}/edit?usp=sharing`;
 
 const DAY_LABELS_FR: Record<string, string> = {
   monday: "Lundi",
@@ -998,44 +993,29 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* Script de vente : le doc Google s'affiche dans la fiche, sans quitter la page */}
+      {/* Script de vente : la fiche closer s'affiche dans la fiche, sans quitter la page */}
       {scriptModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => setScriptModalOpen(false)}
         >
           <div
-            className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-background border border-border p-4 shadow-lg"
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-background border border-border p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-primary" />
                 Script de vente
               </h2>
-              <div className="flex items-center gap-3">
-                <a
-                  href={SALES_SCRIPT_EDIT_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary inline-flex items-center gap-1 hover:underline"
-                >
-                  Ouvrir dans Google Docs
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-                <button
-                  onClick={() => setScriptModalOpen(false)}
-                  className="text-muted-foreground hover:text-foreground cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
+              <button
+                onClick={() => setScriptModalOpen(false)}
+                className="text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            <iframe
-              src={SALES_SCRIPT_PREVIEW_URL}
-              title="Script de vente"
-              className="w-full flex-1 rounded-lg border border-border bg-white"
-            />
+            <SalesScript />
           </div>
         </div>
       )}
