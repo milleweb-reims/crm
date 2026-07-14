@@ -2,11 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Pencil, Trash2, Star, ChevronLeft, ChevronRight, Lock } from "lucide-react";
+import { Pencil, Trash2, Star, ChevronLeft, ChevronRight, Lock, UserCheck } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getLockHolder } from "@/lib/lock";
+import { getLockHolder, getReservationHolder } from "@/lib/lock";
 import type { IProspect, ProspectStatus } from "@/types";
 
 interface ProspectTableProps {
@@ -72,6 +72,9 @@ export function ProspectTable({
             )}
             {prospects.map((prospect) => {
               const lockHolder = getLockHolder(prospect, session?.user?.id);
+              const reservationHolder = lockHolder
+                ? null
+                : getReservationHolder(prospect, session?.user?.id);
               return (
               <tr
                 key={prospect._id}
@@ -89,6 +92,16 @@ export function ProspectTable({
                       >
                         <Lock className="h-3 w-3" />
                         {lockHolder.name}
+                      </Badge>
+                    )}
+                    {reservationHolder && (
+                      <Badge
+                        variant="red"
+                        className="gap-1 flex-shrink-0"
+                        title={`Prospect attribué à ${reservationHolder.name}`}
+                      >
+                        <UserCheck className="h-3 w-3" />
+                        {reservationHolder.name}
                       </Badge>
                     )}
                   </span>
@@ -158,6 +171,9 @@ export function ProspectTable({
         )}
         {prospects.map((prospect) => {
           const lockHolder = getLockHolder(prospect, session?.user?.id);
+          const reservationHolder = lockHolder
+            ? null
+            : getReservationHolder(prospect, session?.user?.id);
           return (
           <div
             key={prospect._id}
@@ -172,6 +188,12 @@ export function ProspectTable({
                     <Badge variant="orange" className="gap-1 flex-shrink-0">
                       <Lock className="h-3 w-3" />
                       {lockHolder.name}
+                    </Badge>
+                  )}
+                  {reservationHolder && (
+                    <Badge variant="red" className="gap-1 flex-shrink-0">
+                      <UserCheck className="h-3 w-3" />
+                      {reservationHolder.name}
                     </Badge>
                   )}
                 </span>
