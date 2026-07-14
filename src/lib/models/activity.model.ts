@@ -11,11 +11,11 @@ const activitySchema = new Schema(
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
     },
     type: {
       type: String,
-      enum: ["note", "call", "email", "status_change", "reminder", "import"],
+      enum: ["note", "call", "email", "status_change", "reminder", "import", "payment"],
       required: true,
     },
     content: { type: String, default: "" },

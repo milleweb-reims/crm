@@ -11,11 +11,19 @@ interface ProspectFiltersProps {
     search: string;
     status: ProspectStatus | "";
   }) => void;
+  initialSearch?: string;
+  initialStatus?: ProspectStatus | "";
 }
 
-export function ProspectFilters({ onFilterChange }: ProspectFiltersProps) {
-  const [search, setSearch] = useState("");
-  const [activeStatus, setActiveStatus] = useState<ProspectStatus | "">("");
+export function ProspectFilters({
+  onFilterChange,
+  initialSearch = "",
+  initialStatus = "",
+}: ProspectFiltersProps) {
+  const [search, setSearch] = useState(initialSearch);
+  const [activeStatus, setActiveStatus] = useState<ProspectStatus | "">(
+    initialStatus
+  );
 
   function handleSearchChange(value: string) {
     setSearch(value);

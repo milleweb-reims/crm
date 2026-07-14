@@ -7,7 +7,7 @@ import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { PROSPECT_STATUSES, type ProspectStatus } from "@/types";
+import { PROSPECT_STATUSES } from "@/types";
 
 export default function NewProspectPage() {
   const router = useRouter();
@@ -82,7 +82,8 @@ export default function NewProspectPage() {
                 defaultValue="prospect"
                 className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               >
-                {PROSPECT_STATUSES.map((s) => (
+                {/* « Payé » est posé par le webhook GoCardless, pas à la création */}
+                {PROSPECT_STATUSES.filter((s) => s.value !== "paye").map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
                   </option>
