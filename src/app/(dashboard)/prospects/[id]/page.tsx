@@ -1000,7 +1000,7 @@ export default function ProspectDetailPage() {
           onClick={() => setScriptModalOpen(false)}
         >
           <div
-            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-background border border-border p-5 shadow-lg"
+            className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-xl bg-background border border-border p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
