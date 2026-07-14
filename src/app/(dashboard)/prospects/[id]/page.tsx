@@ -22,7 +22,7 @@ import {
   Send,
   BookOpen,
 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
 import { ActivityTimeline } from "@/components/activity-timeline";
@@ -61,6 +61,12 @@ function canTransition(from: ProspectStatus, to: ProspectStatus) {
   if (from === "pas_interesse") return to === "prospect";
   return STATUS_FLOW.indexOf(to) <= STATUS_FLOW.indexOf(from) + 1;
 }
+
+// Script de vente : affiché dans une modale via l'aperçu Google Docs (le mode
+// /edit refuse l'iframe, /preview l'autorise pour un doc partagé par lien)
+const SALES_SCRIPT_DOC_ID = "1uuppPcAJ-63h_kso9c-UjskhMWzQF7p4-cfzedbCY0M";
+const SALES_SCRIPT_PREVIEW_URL = `https://docs.google.com/document/d/${SALES_SCRIPT_DOC_ID}/preview`;
+const SALES_SCRIPT_EDIT_URL = `https://docs.google.com/document/d/${SALES_SCRIPT_DOC_ID}/edit?usp=sharing`;
 
 const DAY_LABELS_FR: Record<string, string> = {
   monday: "Lundi",
@@ -110,6 +116,7 @@ export default function ProspectDetailPage() {
   const [activities, setActivities] = useState<ActivityData[]>([]);
   const [loading, setLoading] = useState(true);
   const [rdvModalOpen, setRdvModalOpen] = useState(false);
+  const [scriptModalOpen, setScriptModalOpen] = useState(false);
   const [savingRdv, setSavingRdv] = useState(false);
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailInput, setEmailInput] = useState("");
@@ -534,16 +541,15 @@ export default function ProspectDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <a
-            href="https://docs.google.com/document/d/1uuppPcAJ-63h_kso9c-UjskhMWzQF7p4-cfzedbCY0M/edit?usp=sharing"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(buttonVariants({ variant: "outline" }), "h-9")}
+          <Button
+            variant="outline"
+            className="h-9"
+            onClick={() => setScriptModalOpen(true)}
             data-test="sales-script"
           >
             <BookOpen className="h-4 w-4" />
             Script de vente
-          </a>
+          </Button>
           {isAdmin && (
             <select
               value={assignedId ?? ""}
@@ -988,6 +994,48 @@ export default function ProspectDetailPage() {
                 {sendingEmail ? "Envoi…" : "Envoyer"}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Script de vente : le doc Google s'affiche dans la fiche, sans quitter la page */}
+      {scriptModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setScriptModalOpen(false)}
+        >
+          <div
+            className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-background border border-border p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-primary" />
+                Script de vente
+              </h2>
+              <div className="flex items-center gap-3">
+                <a
+                  href={SALES_SCRIPT_EDIT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary inline-flex items-center gap-1 hover:underline"
+                >
+                  Ouvrir dans Google Docs
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+                <button
+                  onClick={() => setScriptModalOpen(false)}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={SALES_SCRIPT_PREVIEW_URL}
+              title="Script de vente"
+              className="w-full flex-1 rounded-lg border border-border bg-white"
+            />
           </div>
         </div>
       )}
