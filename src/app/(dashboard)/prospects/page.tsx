@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Upload } from "lucide-react";
+import { Plus, Upload, Trash2 } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { ProspectTable } from "@/components/prospect-table";
@@ -18,6 +19,7 @@ interface PaginationData {
 
 export default function ProspectsPage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [prospects, setProspects] = useState<IProspect[]>([]);
   const [pagination, setPagination] = useState<PaginationData>({
     page: 1,
@@ -64,6 +66,13 @@ export default function ProspectsPage() {
     fetchProspects(pagination.page, filters.search, filters.status);
   }
 
+  async function handleDeleteAll() {
+    if (!confirm(`Supprimer TOUS les prospects (${pagination.total}) et tout leur historique ?`)) return;
+    if (!confirm("Cette action est irréversible. Confirmer la suppression totale ?")) return;
+    await fetch("/api/prospects", { method: "DELETE" });
+    fetchProspects(1, filters.search, filters.status);
+  }
+
   return (
     <>
       <Header
@@ -71,6 +80,12 @@ export default function ProspectsPage() {
         description="Gérez vos prospects et suivez leur progression"
         actions={
           <>
+            {session?.user?.role === "admin" && (
+              <Button variant="destructive" onClick={handleDeleteAll}>
+                <Trash2 className="h-4 w-4" />
+                Tout supprimer
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => router.push("/prospects/import")}
@@ -97,7 +112,7 @@ export default function ProspectsPage() {
           prospects={prospects}
           pagination={pagination}
           onPageChange={handlePageChange}
-          onDelete={handleDelete}
+          onDelete={session?.user?.role === "admin" ? handleDelete : undefined}
         />
       )}
     </>
