@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const token =
     request.cookies.get("authjs.session-token")?.value ||
     request.cookies.get("__Secure-authjs.session-token")?.value;
@@ -17,6 +17,8 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!login|api/auth|_next/static|_next/image|favicon.ico).*)",
+    // api/webhooks : appelé par des services externes (GoCardless), pas de session
+    // .*\\..* : fichiers statiques de /public (logo, icônes...)
+    "/((?!login|api/auth|api/webhooks|_next/static|_next/image|favicon.ico|.*\\..*).*)",
   ],
 };
