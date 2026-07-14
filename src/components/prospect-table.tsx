@@ -1,9 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { Pencil, Trash2, Star, ChevronLeft, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { Pencil, Trash2, Star, ChevronLeft, ChevronRight, Lock } from "lucide-react";
 import { StatusBadge } from "./status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getLockHolder } from "@/lib/lock";
 import type { IProspect, ProspectStatus } from "@/types";
 
 interface ProspectTableProps {
@@ -23,6 +26,9 @@ export function ProspectTable({
   onPageChange,
   onDelete,
 }: ProspectTableProps) {
+  const router = useRouter();
+  const { data: session } = useSession();
+
   return (
     <div className="rounded-xl border border-border bg-background shadow-sm overflow-hidden">
       {/* Desktop table */}
@@ -64,18 +70,28 @@ export function ProspectTable({
                 </td>
               </tr>
             )}
-            {prospects.map((prospect) => (
+            {prospects.map((prospect) => {
+              const lockHolder = getLockHolder(prospect, session?.user?.id);
+              return (
               <tr
                 key={prospect._id}
-                className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
+                onClick={() => router.push(`/prospects/${prospect._id}`)}
+                className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
               >
                 <td className="px-6 py-4">
-                  <Link
-                    href={`/prospects/${prospect._id}`}
-                    className="font-medium text-foreground hover:text-primary transition-colors"
-                  >
+                  <span className="font-medium text-foreground hover:text-primary transition-colors inline-flex items-center gap-1.5">
                     {prospect.name}
-                  </Link>
+                    {lockHolder && (
+                      <Badge
+                        variant="orange"
+                        className="gap-1 flex-shrink-0"
+                        title={`Fiche en cours de traitement par ${lockHolder.name}`}
+                      >
+                        <Lock className="h-3 w-3" />
+                        {lockHolder.name}
+                      </Badge>
+                    )}
+                  </span>
                   {prospect.websiteRoot && (
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {prospect.websiteRoot}
@@ -104,13 +120,16 @@ export function ProspectTable({
                     <span className="text-muted-foreground">—</span>
                   )}
                 </td>
-                <td className="px-6 py-4 text-right">
+                <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-1">
-                    <Link href={`/prospects/${prospect._id}`}>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    </Link>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => router.push(`/prospects/${prospect._id}`)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     {onDelete && (
                       <Button
                         variant="ghost"
@@ -124,7 +143,8 @@ export function ProspectTable({
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -136,16 +156,25 @@ export function ProspectTable({
             Aucun prospect trouvé
           </div>
         )}
-        {prospects.map((prospect) => (
-          <div key={prospect._id} className="p-4 space-y-2">
+        {prospects.map((prospect) => {
+          const lockHolder = getLockHolder(prospect, session?.user?.id);
+          return (
+          <div
+            key={prospect._id}
+            className="p-4 space-y-2 cursor-pointer active:bg-muted/30"
+            onClick={() => router.push(`/prospects/${prospect._id}`)}
+          >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <Link
-                  href={`/prospects/${prospect._id}`}
-                  className="font-medium text-foreground hover:text-primary transition-colors block truncate"
-                >
-                  {prospect.name}
-                </Link>
+                <span className="font-medium text-foreground hover:text-primary transition-colors flex items-center gap-1.5">
+                  <span className="truncate">{prospect.name}</span>
+                  {lockHolder && (
+                    <Badge variant="orange" className="gap-1 flex-shrink-0">
+                      <Lock className="h-3 w-3" />
+                      {lockHolder.name}
+                    </Badge>
+                  )}
+                </span>
                 {prospect.address?.city && (
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {prospect.address.city}
@@ -159,12 +188,15 @@ export function ProspectTable({
                 {prospect.phone && <p>{prospect.phone}</p>}
                 {prospect.email && <p className="truncate max-w-[200px]">{prospect.email}</p>}
               </div>
-              <div className="flex items-center gap-1">
-                <Link href={`/prospects/${prospect._id}`}>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                </Link>
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => router.push(`/prospects/${prospect._id}`)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
                 {onDelete && (
                   <Button
                     variant="ghost"
@@ -178,7 +210,8 @@ export function ProspectTable({
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Pagination */}
