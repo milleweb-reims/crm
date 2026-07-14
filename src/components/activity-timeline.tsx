@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   MessageSquare,
   Phone,
@@ -9,6 +9,7 @@ import {
   Bell,
   Upload,
   Send,
+  CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ActivityType } from "@/types";
@@ -35,6 +36,7 @@ const typeConfig: Record<
   },
   reminder: { icon: Bell, label: "Rappel", color: "text-yellow-500" },
   import: { icon: Upload, label: "Import", color: "text-gray-500" },
+  payment: { icon: CreditCard, label: "Paiement", color: "text-emerald-500" },
 };
 
 interface ActivityTimelineProps {
@@ -42,12 +44,37 @@ interface ActivityTimelineProps {
   onAddActivity?: (type: ActivityType, content: string) => void;
 }
 
+// On affiche peu d'activités au départ ; « Voir plus » active ensuite le
+// scroll infini (chargement au fur et à mesure du défilement).
+const INITIAL_COUNT = 5;
+const LOAD_STEP = 10;
+
 export function ActivityTimeline({
   activities,
   onAddActivity,
 }: ActivityTimelineProps) {
   const [newNote, setNewNote] = useState("");
   const [noteType, setNoteType] = useState<ActivityType>("note");
+  const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
+  const [infiniteScroll, setInfiniteScroll] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!infiniteScroll) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleCount((count) => count + LOAD_STEP);
+      }
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [infiniteScroll]);
+
+  const visibleActivities = activities.slice(0, visibleCount);
+  const hasMore = activities.length > visibleCount;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -123,7 +150,7 @@ export function ActivityTimeline({
             Aucune activité pour le moment
           </p>
         )}
-        {activities.map((activity) => {
+        {visibleActivities.map((activity) => {
           const config = typeConfig[activity.type];
           const Icon = config.icon;
           return (
@@ -153,6 +180,28 @@ export function ActivityTimeline({
             </div>
           );
         })}
+
+        {/* Voir plus → active le scroll infini */}
+        {hasMore && !infiniteScroll && (
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setInfiniteScroll(true);
+                setVisibleCount((count) => count + LOAD_STEP);
+              }}
+              className="text-sm font-medium text-primary hover:underline cursor-pointer"
+              data-test="activities-see-more"
+            >
+              Voir plus ({activities.length - visibleCount} restantes)
+            </button>
+          </div>
+        )}
+        {hasMore && infiniteScroll && (
+          <div ref={sentinelRef} className="flex justify-center py-3">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          </div>
+        )}
       </div>
     </div>
   );

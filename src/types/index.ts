@@ -2,11 +2,11 @@ export type UserRole = "admin" | "closer" | "dev";
 
 export type ProspectStatus =
   | "prospect"
+  | "en_appel"
   | "rdv"
-  | "en_dev"
-  | "devis_envoye"
-  | "signe"
-  | "livre";
+  | "lien_envoye"
+  | "paye"
+  | "pas_interesse";
 
 export const PROSPECT_STATUSES: {
   value: ProspectStatus;
@@ -14,11 +14,11 @@ export const PROSPECT_STATUSES: {
   color: string;
 }[] = [
   { value: "prospect", label: "Prospect", color: "gray" },
-  { value: "rdv", label: "RDV", color: "blue" },
-  { value: "en_dev", label: "En dev", color: "orange" },
-  { value: "devis_envoye", label: "Devis envoyé", color: "violet" },
-  { value: "signe", label: "Signé", color: "green" },
-  { value: "livre", label: "Livré", color: "emerald" },
+  { value: "en_appel", label: "En appel", color: "amber" },
+  { value: "rdv", label: "RDV Démo", color: "blue" },
+  { value: "lien_envoye", label: "Lien envoyé", color: "violet" },
+  { value: "paye", label: "Payé", color: "green" },
+  { value: "pas_interesse", label: "Pas intéressé", color: "red" },
 ];
 
 export interface IUser {
@@ -79,10 +79,24 @@ export interface IProspect {
   emails: IEmails;
   adPixels: string;
   status: ProspectStatus;
-  assignedTo: string | null;
+  assignedTo:
+    | { _id: string; name: string; email?: string; role?: UserRole }
+    | string
+    | null;
+  lockedBy: { _id: string; name: string } | string | null;
+  lockedAt: Date | null;
   quoteAmount: number | null;
   devUrl: string | null;
   rdvDate: Date | null;
+  paidAt: Date | null;
+  paidAmount: number | null;
+  gcPaymentId: string | null;
+  qontoInvoiceId: string | null;
+  qontoInvoiceNumber: string | null;
+  qontoInvoiceUrl: string | null;
+  gcBillingRequestId: string | null;
+  paymentLink: string | null;
+  paymentLinkCreatedAt: Date | null;
   signedDate: Date | null;
   deliveredDate: Date | null;
   googleMapsLink: string;
@@ -98,7 +112,8 @@ export type ActivityType =
   | "email"
   | "status_change"
   | "reminder"
-  | "import";
+  | "import"
+  | "payment";
 
 export interface IActivity {
   _id: string;

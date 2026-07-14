@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   Users,
   Kanban,
-  Bell,
   Settings,
   LogOut,
   Menu,
@@ -23,7 +22,6 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Prospects", href: "/prospects", icon: Users },
   { name: "Pipeline", href: "/pipeline", icon: Kanban },
-  { name: "Rappels", href: "/reminders", icon: Bell },
 ];
 
 const bottomNav = [

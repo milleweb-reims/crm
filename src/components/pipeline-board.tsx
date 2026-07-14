@@ -7,23 +7,25 @@ import {
   Draggable,
   type DropResult,
 } from "@hello-pangea/dnd";
-import { Phone, MapPin, User, AlertCircle } from "lucide-react";
+import { Phone, MapPin, User, AlertCircle, Lock } from "lucide-react";
 import { PROSPECT_STATUSES, type IProspect, type ProspectStatus } from "@/types";
+import { getLockHolder } from "@/lib/lock";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useRealtime } from "@/hooks/use-realtime";
 
 const columnStyles: Record<ProspectStatus, { bg: string; header: string; headerText: string; card: string; badge: string; dragOver: string }> = {
   prospect: { bg: "bg-gray-50", header: "bg-gray-100", headerText: "text-gray-700", card: "border-t-gray-400", badge: "bg-gray-200 text-gray-600", dragOver: "bg-gray-100" },
+  en_appel: { bg: "bg-amber-50", header: "bg-amber-100", headerText: "text-amber-700", card: "border-t-amber-400", badge: "bg-amber-200 text-amber-700", dragOver: "bg-amber-100" },
   rdv: { bg: "bg-blue-50", header: "bg-blue-100", headerText: "text-blue-700", card: "border-t-blue-400", badge: "bg-blue-200 text-blue-700", dragOver: "bg-blue-100" },
-  en_dev: { bg: "bg-orange-50", header: "bg-orange-100", headerText: "text-orange-700", card: "border-t-orange-400", badge: "bg-orange-200 text-orange-700", dragOver: "bg-orange-100" },
-  devis_envoye: { bg: "bg-violet-50", header: "bg-violet-100", headerText: "text-violet-700", card: "border-t-violet-400", badge: "bg-violet-200 text-violet-700", dragOver: "bg-violet-100" },
-  signe: { bg: "bg-green-50", header: "bg-green-100", headerText: "text-green-700", card: "border-t-green-400", badge: "bg-green-200 text-green-700", dragOver: "bg-green-100" },
-  livre: { bg: "bg-emerald-50", header: "bg-emerald-100", headerText: "text-emerald-700", card: "border-t-emerald-500", badge: "bg-emerald-200 text-emerald-700", dragOver: "bg-emerald-100" },
+  lien_envoye: { bg: "bg-violet-50", header: "bg-violet-100", headerText: "text-violet-700", card: "border-t-violet-400", badge: "bg-violet-200 text-violet-700", dragOver: "bg-violet-100" },
+  paye: { bg: "bg-green-50", header: "bg-green-100", headerText: "text-green-700", card: "border-t-green-400", badge: "bg-green-200 text-green-700", dragOver: "bg-green-100" },
+  pas_interesse: { bg: "bg-red-50", header: "bg-red-100", headerText: "text-red-700", card: "border-t-red-400", badge: "bg-red-200 text-red-700", dragOver: "bg-red-100" },
 };
 
 export function PipelineBoard() {
+  const router = useRouter();
   const { data: session } = useSession();
   const [columns, setColumns] = useState<Record<ProspectStatus, IProspect[]>>(
     () => {
@@ -65,6 +67,13 @@ export function PipelineBoard() {
     fetchProspects();
   });
 
+  // Filet de sécurité : le SSE ne couvre pas tous les cas (bus en mémoire,
+  // multi-process...) — on rafraîchit aussi le board par polling.
+  useEffect(() => {
+    const interval = setInterval(fetchProspects, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchProspects]);
+
   async function handleDragEnd(result: DropResult) {
     const { source, destination, draggableId } = result;
     if (!destination) return;
@@ -104,8 +113,8 @@ export function PipelineBoard() {
         body: JSON.stringify({ status: destStatus }),
       });
 
-      if (res.status === 409) {
-        // Conflict: prospect already taken by another closer — revert
+      if (res.status === 409 || res.status === 423) {
+        // Conflit : prospect déjà pris ou fiche verrouillée par un autre closer — revert
         const data = await res.json();
         setConflictMsg(data.error);
         fetchProspects(); // Reload to get true state
@@ -171,21 +180,31 @@ export function PipelineBoard() {
                           ref={provided.innerRef}
                           {...provided.draggableProps}
                           {...provided.dragHandleProps}
+                          onClick={(e) => {
+                            // dnd marque le clic comme defaultPrevented après un drag
+                            if (e.defaultPrevented) return;
+                            router.push(`/prospects/${prospect._id}`);
+                          }}
                           className={cn(
-                            "bg-background rounded-lg border border-border p-3 shadow-sm border-t-2",
+                            "bg-background rounded-lg border border-border p-3 shadow-sm border-t-2 cursor-pointer",
                             columnStyles[status.value].card,
                             snapshot.isDragging && "shadow-lg rotate-2"
                           )}
                         >
-                          <Link
-                            href={`/prospects/${prospect._id}`}
-                            className="block"
-                          >
-                            <p className="text-sm font-medium text-foreground truncate hover:text-primary">
-                              {prospect.name}
-                            </p>
-                          </Link>
+                          <p className="text-sm font-medium text-foreground hover:text-primary flex items-center gap-1.5">
+                            <span className="truncate">{prospect.name}</span>
+                            {getLockHolder(prospect, session?.user?.id) && (
+                              <Lock className="h-3.5 w-3.5 text-orange-500 flex-shrink-0" />
+                            )}
+                          </p>
                           <div className="mt-2 space-y-1">
+                            {getLockHolder(prospect, session?.user?.id) && (
+                              <p className="text-xs text-orange-600 flex items-center gap-1 font-medium">
+                                <Lock className="h-3 w-3" />
+                                En cours par{" "}
+                                {getLockHolder(prospect, session?.user?.id)?.name}
+                              </p>
+                            )}
                             {prospect.phone && (
                               <p className="text-xs text-muted-foreground flex items-center gap-1">
                                 <Phone className="h-3 w-3" />
