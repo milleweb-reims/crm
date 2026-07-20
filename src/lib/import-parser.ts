@@ -272,17 +272,29 @@ export function parseRow(
 }
 
 /**
+ * Determines whether a prospect carries a callable number, in either
+ * the local or the international column.
+ */
+function hasPhone(prospect: Record<string, unknown>): boolean {
+  return [prospect.phone, prospect.phoneInternational].some(
+    (value) => typeof value === "string" && value.trim().length > 0
+  );
+}
+
+/**
  * Result of parsing an Excel sheet, with the counts of rows deliberately discarded.
  */
 export interface ParseRowsResult {
   readonly prospects: Record<string, unknown>[];
   readonly closedCount: number;
+  readonly noPhoneCount: number;
   readonly unnamedCount: number;
 }
 
 /**
- * Transforms multiple rows from Excel data, discarding rows without a name and
- * establishments flagged as permanently closed ("Est fermé définitivement").
+ * Transforms multiple rows from Excel data, discarding rows without a name,
+ * establishments flagged as permanently closed ("Est fermé définitivement"),
+ * and establishments with no phone number to call.
  * @param rows Array of Excel row data
  * @param mapping Column header to prospect field path mapping
  * @returns Importable prospects plus the number of rows skipped per reason
@@ -293,11 +305,13 @@ export function parseRows(
 ): ParseRowsResult {
   const parsed = rows.map((row) => parseRow(row, mapping));
   const named = parsed.filter((prospect) => Boolean(prospect.name));
-  const prospects = named.filter((prospect) => prospect.isClosed !== true);
+  const open = named.filter((prospect) => prospect.isClosed !== true);
+  const prospects = open.filter(hasPhone);
 
   return {
     prospects,
-    closedCount: named.length - prospects.length,
+    closedCount: named.length - open.length,
+    noPhoneCount: open.length - prospects.length,
     unnamedCount: parsed.length - named.length,
   };
 }

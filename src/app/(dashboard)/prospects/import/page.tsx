@@ -17,6 +17,38 @@ interface ImportResult {
   readonly errors: number;
 }
 
+interface ExcludedCounts {
+  readonly closed: number;
+  readonly noPhone: number;
+}
+
+const NO_EXCLUSIONS: ExcludedCounts = { closed: 0, noPhone: 0 };
+
+/**
+ * Returns the French plural suffix for the given count.
+ */
+function plural(count: number): string {
+  return count > 1 ? "s" : "";
+}
+
+/**
+ * Summarizes the rows discarded during parsing. Renders nothing when every row was kept.
+ */
+function ExcludedRowsNotice({ counts }: { readonly counts: ExcludedCounts }) {
+  const reasons = [
+    counts.closed > 0 ? `${counts.closed} fermé${plural(counts.closed)} définitivement` : null,
+    counts.noPhone > 0 ? `${counts.noPhone} sans téléphone` : null,
+  ].filter((reason): reason is string => reason !== null);
+
+  if (reasons.length === 0) return null;
+
+  return (
+    <p className="text-sm text-orange-600">
+      Exclus : {reasons.join(" · ")}
+    </p>
+  );
+}
+
 export default function ImportPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
@@ -25,7 +57,7 @@ export default function ImportPage() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [parsedProspects, setParsedProspects] = useState<Record<string, unknown>[]>([]);
-  const [closedCount, setClosedCount] = useState(0);
+  const [excluded, setExcluded] = useState<ExcludedCounts>(NO_EXCLUSIONS);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
 
@@ -55,7 +87,7 @@ export default function ImportPage() {
 
         const parsed = parseRows(jsonData, detectedMapping);
         setParsedProspects(parsed.prospects);
-        setClosedCount(parsed.closedCount);
+        setExcluded({ closed: parsed.closedCount, noPhone: parsed.noPhoneCount });
         setStep("preview");
       } catch {
         setError("Erreur lors de la lecture du fichier");
@@ -148,11 +180,7 @@ export default function ImportPage() {
                 <p className="text-sm text-muted-foreground">
                   {rows.length} lignes détectées · {Object.keys(mapping).length}/{headers.length} colonnes mappées · {parsedProspects.length} prospects valides
                 </p>
-                {closedCount > 0 && (
-                  <p className="text-sm text-orange-600">
-                    {closedCount} établissement{closedCount > 1 ? "s" : ""} fermé{closedCount > 1 ? "s" : ""} définitivement exclu{closedCount > 1 ? "s" : ""}
-                  </p>
-                )}
+                <ExcludedRowsNotice counts={excluded} />
               </div>
             </div>
 
@@ -188,7 +216,7 @@ export default function ImportPage() {
           </Card>
 
           <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={() => { setStep("upload"); setRows([]); setClosedCount(0); setError(""); }}>
+            <Button variant="outline" onClick={() => { setStep("upload"); setRows([]); setExcluded(NO_EXCLUSIONS); setError(""); }}>
               Annuler
             </Button>
             <Button onClick={handleImport} disabled={parsedProspects.length === 0}>
