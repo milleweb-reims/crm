@@ -6,6 +6,7 @@ import { Reminder } from "@/lib/models/reminder.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 import { withCityKey } from "@/lib/city";
+import { resolveAssignmentsByCity } from "@/lib/territory-service";
 
 /**
  * Builds a MongoDB filter for prospect queries based on search parameters and user role.
@@ -133,7 +134,28 @@ export async function POST(req: NextRequest) {
     delete body.quoteAmount;
   }
 
-  const prospect = await Prospect.create(withCityKey(body));
+  const payload = withCityKey(body);
+
+  /**
+   * Résout le closer d'un territoire pour ce prospect.
+   * Le territoire ne s'applique qu'à défaut : une attribution explicite gagne.
+   */
+  async function resolveTerritoryAssignee(): Promise<string | null> {
+    if (payload.assignedTo) return null;
+
+    const cityKey = (payload.address as Record<string, unknown> | undefined)
+      ?.cityKey;
+    if (typeof cityKey !== "string" || cityKey === "") return null;
+
+    const assignments = await resolveAssignmentsByCity([cityKey]);
+    return assignments.get(cityKey)?.[0] ?? null;
+  }
+
+  const territoryAssignee = await resolveTerritoryAssignee();
+
+  const prospect = await Prospect.create(
+    territoryAssignee ? { ...payload, assignedTo: territoryAssignee } : payload
+  );
 
   emitCrmEvent({ type: "prospect:created", prospectId: prospect._id.toString(), userId: session.user.id, timestamp: Date.now() });
 
