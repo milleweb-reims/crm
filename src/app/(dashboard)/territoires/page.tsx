@@ -224,6 +224,7 @@ export default function TerritoiresPage() {
                             closerIds: territory.closers.map((closer) => closer._id),
                           })
                         }
+                        data-test="territory-edit"
                       >
                         Modifier
                       </Button>
@@ -232,6 +233,7 @@ export default function TerritoiresPage() {
                         size="icon"
                         onClick={() => handleDelete(territory)}
                         title="Supprimer"
+                        data-test="territory-delete"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
