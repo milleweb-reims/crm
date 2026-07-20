@@ -105,20 +105,32 @@ export async function applyTerritory(
   const loads = await measureLoads(closerIds);
   const picks = distribute({ loads, count: prospects.length });
 
-  const operations = prospects.map((prospect, index) => ({
-    updateOne: {
+  // Regroupement des prospects par closer désigné.
+  const idsByCloser = picks.reduce<Map<string, unknown[]>>((acc, closerId, index) => {
+    const current = acc.get(closerId) ?? [];
+    return acc.set(closerId, [...current, prospects[index]!._id]);
+  }, new Map());
+
+  // Une écriture par closer plutôt qu'un bulkWrite global : chaque updateMany
+  // retourne son propre modifiedCount, donc le détail par closer est exact par
+  // construction. Le déduire de `picks` rapporterait l'intention et non le
+  // réel — un prospect attribué entre-temps par un autre écrivain serait
+  // compté à tort. Quelques requêtes de plus sur une opération admin peu
+  // fréquente, contre un audit qui ne ment pas.
+  const written = await Promise.all(
+    [...idsByCloser].map(async ([closerId, ids]) => {
       // Le filtre reprend `assignedTo: null` : si un autre écrivain a attribué
-      // ce prospect entre-temps, l'opération devient un no-op au lieu de l'écraser.
-      filter: { _id: prospect._id, assignedTo: null },
-      update: { $set: { assignedTo: picks[index]! } },
-    },
-  }));
+      // ce prospect entre-temps, il est ignoré au lieu d'être écrasé.
+      const { modifiedCount } = await Prospect.updateMany(
+        { _id: { $in: ids }, assignedTo: null },
+        { $set: { assignedTo: closerId } }
+      );
+      return [closerId, modifiedCount] as const;
+    })
+  );
 
-  const { modifiedCount } = await Prospect.bulkWrite(operations);
-
-  const perCloser = picks.reduce<Record<string, number>>((acc, closerId) => {
-    return { ...acc, [closerId]: (acc[closerId] ?? 0) + 1 };
-  }, {});
+  const perCloser = Object.fromEntries(written.filter(([, count]) => count > 0));
+  const modifiedCount = written.reduce((total, [, count]) => total + count, 0);
 
   if (modifiedCount > 0) {
     // Une activité par prospect serait disproportionnée sur un lot de plusieurs
