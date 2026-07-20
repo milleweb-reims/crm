@@ -1,3 +1,5 @@
+import { withCityKey } from "./city";
+
 /**
  * Maps Google Maps scraping Excel headers to prospect field paths.
  * Enables flexible column detection and field assignment during data import.
@@ -268,7 +270,7 @@ export function parseRow(
     prospect.contactPages = contactPages;
   }
 
-  return prospect;
+  return withCityKey(prospect);
 }
 
 /**

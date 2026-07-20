@@ -6,6 +6,9 @@ const addressSchema = new Schema(
     line1: { type: String, default: "" },
     line2: { type: String, default: "" },
     city: { type: String, default: "" },
+    // Clé normalisée (minuscules, sans accents) servant au rattachement
+    // à un territoire. Dérivée de `city` via withCityKey aux points d'écriture.
+    cityKey: { type: String, default: "" },
     postalCode: { type: String, default: "" },
     state: { type: String, default: "" },
     region: { type: String, default: "" },
@@ -120,6 +123,7 @@ const prospectSchema = new Schema(
 prospectSchema.index({ name: 1, "address.city": 1 });
 prospectSchema.index({ status: 1 });
 prospectSchema.index({ assignedTo: 1 });
+prospectSchema.index({ "address.cityKey": 1 });
 prospectSchema.index({ location: "2dsphere" });
 
 export const Prospect =
