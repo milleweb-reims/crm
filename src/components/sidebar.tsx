@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Users,
   Kanban,
+  Map,
   Settings,
   LogOut,
   Menu,
@@ -25,6 +26,10 @@ const navigation = [
   { name: "Pipeline", href: "/pipeline", icon: Kanban },
 ];
 
+const adminNavigation = [
+  { name: "Territoires", href: "/territoires", icon: Map },
+];
+
 const bottomNav = [
   { name: "Paramètres", href: "/settings", icon: Settings },
 ];
@@ -34,6 +39,11 @@ export function Sidebar() {
   const { data: session } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
   const collapsed = useSidebarCollapsed();
+
+  const visibleNavigation =
+    session?.user?.role === "admin"
+      ? [...navigation, ...adminNavigation]
+      : navigation;
 
   function toggleCollapsed() {
     setSidebarCollapsed(!collapsed);
@@ -69,7 +79,7 @@ export function Sidebar() {
 
       {/* Main nav */}
       <nav className={cn("flex-1 py-4 space-y-1", collapsed ? "px-2" : "px-3")}>
-        {navigation.map((item) => (
+        {visibleNavigation.map((item) => (
           <Link
             key={item.name}
             href={item.href}
