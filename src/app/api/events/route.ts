@@ -3,6 +3,12 @@ import { getAuthSession } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
+const formatSseMessage = (eventType: string, data: string): string =>
+  `event: ${eventType}\ndata: ${data}\n\n`;
+
+const INITIAL_PING = "event: ping\ndata: connected\n\n";
+const HEARTBEAT_MESSAGE = "event: ping\ndata: heartbeat\n\n";
+
 export async function GET() {
   const session = await getAuthSession();
   if (!session) {
@@ -12,26 +18,23 @@ export async function GET() {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      // Send initial ping
-      controller.enqueue(encoder.encode("event: ping\ndata: connected\n\n"));
+      controller.enqueue(encoder.encode(INITIAL_PING));
 
       const heartbeat = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode("event: ping\ndata: heartbeat\n\n"));
+          controller.enqueue(encoder.encode(HEARTBEAT_MESSAGE));
         } catch {
           clearInterval(heartbeat);
         }
       }, 30000);
 
       function onEvent(event: CrmEvent) {
-        // Don't send events back to the user who triggered them
         if (event.userId === session!.user.id) return;
 
         try {
           const data = JSON.stringify(event);
-          controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${data}\n\n`));
+          controller.enqueue(encoder.encode(formatSseMessage(event.type, data)));
         } catch {
-          // Client disconnected
           cleanup();
         }
       }
@@ -43,8 +46,6 @@ export async function GET() {
 
       eventBus.on("crm", onEvent);
 
-      // Cleanup when client disconnects
-      // The controller.close() is called when the request is aborted
       const checkClosed = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(""));

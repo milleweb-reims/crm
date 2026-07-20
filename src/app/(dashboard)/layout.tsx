@@ -1,26 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar";
+import { useSidebarCollapsed } from "@/hooks/use-sidebar-collapsed";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("sidebar-collapsed");
-    if (saved === "true") setCollapsed(true);
-
-    function handleToggle(e: Event) {
-      setCollapsed((e as CustomEvent).detail);
-    }
-
-    window.addEventListener("sidebar-toggle", handleToggle);
-    return () => window.removeEventListener("sidebar-toggle", handleToggle);
-  }, []);
+  const collapsed = useSidebarCollapsed();
 
   return (
     <div className="min-h-screen">

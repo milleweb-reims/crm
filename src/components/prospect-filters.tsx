@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { StatusGuideLink } from "@/components/status-guide";
 import { PROSPECT_STATUSES, type ProspectStatus } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -13,12 +14,14 @@ interface ProspectFiltersProps {
   }) => void;
   initialSearch?: string;
   initialStatus?: ProspectStatus | "";
+  hideStatus?: boolean;
 }
 
 export function ProspectFilters({
   onFilterChange,
   initialSearch = "",
   initialStatus = "",
+  hideStatus = false,
 }: ProspectFiltersProps) {
   const [search, setSearch] = useState(initialSearch);
   const [activeStatus, setActiveStatus] = useState<ProspectStatus | "">(
@@ -38,42 +41,45 @@ export function ProspectFilters({
 
   return (
     <div className="space-y-4 mb-6">
-      {/* Status filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => handleStatusChange("")}
-          className={cn(
-            "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-            activeStatus === ""
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:bg-muted/80"
-          )}
-        >
-          Tous
-        </button>
-        {PROSPECT_STATUSES.map((status) => (
+      {/* Status filters — un dev n'a pas la notion de statut */}
+      {!hideStatus && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            key={status.value}
-            onClick={() => handleStatusChange(status.value)}
+            onClick={() => handleStatusChange("")}
             className={cn(
               "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-              activeStatus === status.value
+              activeStatus === ""
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             )}
           >
-            {status.label}
+            Tous
           </button>
-        ))}
-        {activeStatus && (
-          <button
-            onClick={() => handleStatusChange("")}
-            className="text-muted-foreground hover:text-foreground cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+          {PROSPECT_STATUSES.map((status) => (
+            <button
+              key={status.value}
+              onClick={() => handleStatusChange(status.value)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                activeStatus === status.value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              )}
+            >
+              {status.label}
+            </button>
+          ))}
+          {activeStatus && (
+            <button
+              onClick={() => handleStatusChange("")}
+              className="text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+          <StatusGuideLink className="sm:ml-auto" />
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative max-w-md">

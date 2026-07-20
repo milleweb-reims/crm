@@ -22,7 +22,7 @@ export function ReminderForm({ prospectId, onCreated }: ReminderFormProps) {
 
     setLoading(true);
 
-    await fetch("/api/reminders", {
+    const res = await fetch("/api/reminders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -32,6 +32,12 @@ export function ReminderForm({ prospectId, onCreated }: ReminderFormProps) {
         dueDate: new Date(dueDate),
       }),
     });
+
+    if (!res.ok) {
+      console.error("Failed to create reminder", { status: res.status });
+      setLoading(false);
+      return;
+    }
 
     setTitle("");
     setDueDate("");

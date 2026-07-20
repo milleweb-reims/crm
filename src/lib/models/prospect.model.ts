@@ -93,6 +93,11 @@ const prospectSchema = new Schema(
     // Prix par défaut d'un site : 500 €
     quoteAmount: { type: Number, default: 500 },
     devUrl: { type: String, default: null },
+    deliveryStage: {
+      type: String,
+      enum: ["a_faire", "en_cours", "termine"],
+      default: null,
+    },
     rdvDate: { type: Date, default: null },
     paidAt: { type: Date, default: null },
     paidAmount: { type: Number, default: null },

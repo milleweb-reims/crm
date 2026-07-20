@@ -4,8 +4,25 @@ import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { sendEmail } from "@/lib/mailer";
+import type { IProspect } from "@/types";
 
-// Envoie le lien de paiement du prospect par email (au prospect).
+function getProspectEmail(prospect: IProspect): string | null {
+  return prospect.email || prospect.emails?.individual || prospect.emails?.contact || null;
+}
+
+function formatPaymentAmount(amount: number | undefined): string {
+  return amount ? `${amount.toLocaleString("fr-FR")} €` : "";
+}
+
+function buildPaymentLinkEmail(paymentLink: string, formattedAmount: string): string {
+  return `<p>Bonjour,</p>
+   <p>Comme convenu, voici votre lien de paiement sécurisé${formattedAmount ? ` d'un montant de <strong>${formattedAmount}</strong>` : ""} :</p>
+   <p><a href="${paymentLink}">${paymentLink}</a></p>
+   <p>Le paiement s'effectue directement depuis votre banque via GoCardless, notre prestataire de paiement.</p>
+   <p>À très vite,<br/>L'équipe Milleweb</p>`;
+}
+
+/** Send the prospect's payment link via email. */
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -28,8 +45,7 @@ export async function POST(
     );
   }
 
-  const to =
-    prospect.email || prospect.emails?.individual || prospect.emails?.contact;
+  const to = getProspectEmail(prospect);
   if (!to) {
     return NextResponse.json(
       { error: "Ce prospect n'a pas d'adresse email" },
@@ -37,19 +53,14 @@ export async function POST(
     );
   }
 
-  const amount = prospect.quoteAmount
-    ? `${prospect.quoteAmount.toLocaleString("fr-FR")} €`
-    : "";
+  const amount = formatPaymentAmount(prospect.quoteAmount);
+  const html = buildPaymentLinkEmail(prospect.paymentLink, amount);
 
-  const sent = await sendEmail(
+  const sent = await sendEmail({
     to,
-    `Votre lien de paiement — ${prospect.name}`,
-    `<p>Bonjour,</p>
-     <p>Comme convenu, voici votre lien de paiement sécurisé${amount ? ` d'un montant de <strong>${amount}</strong>` : ""} :</p>
-     <p><a href="${prospect.paymentLink}">${prospect.paymentLink}</a></p>
-     <p>Le paiement s'effectue directement depuis votre banque via GoCardless, notre prestataire de paiement.</p>
-     <p>À très vite,<br/>L'équipe Milleweb</p>`
-  );
+    subject: `Votre lien de paiement — ${prospect.name}`,
+    html,
+  });
 
   if (!sent) {
     return NextResponse.json(

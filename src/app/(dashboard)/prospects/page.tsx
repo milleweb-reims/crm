@@ -12,28 +12,28 @@ import type { IProspect, ProspectStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 
 interface PaginationData {
-  page: number;
-  totalPages: number;
-  total: number;
+  readonly page: number;
+  readonly totalPages: number;
+  readonly total: number;
 }
 
 interface ListFilters {
-  search: string;
-  status: ProspectStatus | "";
-  assignedTo: string;
-  rdvUpcoming: boolean;
-  paidMonth: boolean;
+  readonly search: string;
+  readonly status: ProspectStatus | "";
+  readonly assignedTo: string;
+  readonly rdvUpcoming: boolean;
+  readonly paidMonth: boolean;
 }
 
 function FilterChip({
   label,
   onClear,
   testId,
-}: {
+}: Readonly<{
   label: string;
   onClear: () => void;
   testId: string;
-}) {
+}>) {
   return (
     <button
       onClick={onClear}
@@ -87,7 +87,6 @@ function ProspectsPageContent() {
     fetchProspects(1, filters);
   }, [filters, fetchProspects]);
 
-  // Real-time: refresh when other users make changes
   useRealtime(() => {
     fetchProspects(pagination.page, filters);
   });
@@ -97,7 +96,7 @@ function ProspectsPageContent() {
     setFilters((f) => ({ ...f, ...patch }));
   }
 
-  function handleFilterChange(newFilters: { search: string; status: ProspectStatus | "" }) {
+  function handleFilterChange(newFilters: Readonly<{ search: string; status: ProspectStatus | "" }>) {
     updateFilters(newFilters);
   }
 
@@ -181,6 +180,7 @@ function ProspectsPageContent() {
         onFilterChange={handleFilterChange}
         initialSearch={filters.search}
         initialStatus={filters.status}
+        hideStatus={session?.user?.role === "dev"}
       />
 
       {loading ? (

@@ -5,9 +5,10 @@ import { getAuthSession, unauthorized, forbidden } from "@/lib/api-auth";
 import { getQontoInvoicePdf } from "@/lib/qonto";
 import { generateInvoice } from "@/lib/invoicing";
 
-// Télécharge le PDF de la facture Qonto du prospect.
-// Si le PDF n'est pas (encore) disponible, redirige vers la page Qonto de la
-// facture en secours.
+/**
+ * Télécharge le PDF de la facture Qonto du prospect.
+ * Si le PDF n'est pas (encore) disponible, redirige vers la page Qonto de la facture en secours.
+ */
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -51,9 +52,11 @@ export async function GET(
   });
 }
 
-// Rattrapage manuel (admin) : génère la facture Qonto d'un prospect payé
-// dont la génération automatique a échoué (webhook). Idempotent : refuse si
-// une facture existe déjà.
+/**
+ * Rattrapage manuel (admin) : génère la facture Qonto d'un prospect payé
+ * dont la génération automatique a échoué (webhook). Idempotent : refuse si
+ * une facture existe déjà.
+ */
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

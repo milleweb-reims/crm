@@ -1,24 +1,30 @@
 import nodemailer from "nodemailer";
 
-// Envoi d'email via SMTP. Variables d'env requises :
-// SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, ADMIN_EMAIL
 export interface MailAttachment {
-  filename: string;
-  content: Buffer;
+  readonly filename: string;
+  readonly content: Buffer;
 }
 
-export async function sendEmail(
-  to: string,
-  subject: string,
-  html: string,
-  attachments?: MailAttachment[]
-) {
+export type SendEmailOptions = {
+  readonly to: string;
+  readonly subject: string;
+  readonly html: string;
+  readonly attachments?: ReadonlyArray<MailAttachment>;
+};
+
+/**
+ * Send email via SMTP.
+ *
+ * Requires environment variables:
+ * - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, ADMIN_EMAIL
+ */
+export async function sendEmail(options: SendEmailOptions) {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM } = process.env;
 
   if (!SMTP_HOST) {
     console.error("Mailer non configuré (SMTP_HOST manquant) — email non envoyé", {
-      to,
-      subject,
+      to: options.to,
+      subject: options.subject,
     });
     return false;
   }
@@ -33,14 +39,14 @@ export async function sendEmail(
   try {
     await transporter.sendMail({
       from: MAIL_FROM || SMTP_USER,
-      to,
-      subject,
-      html,
-      attachments,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      attachments: options.attachments ? [...options.attachments] : undefined,
     });
     return true;
   } catch (error) {
-    console.error("Échec envoi email", { to, subject, error });
+    console.error("Échec envoi email", { to: options.to, subject: options.subject, error });
     return false;
   }
 }
@@ -53,5 +59,5 @@ export async function sendAdminEmail(subject: string, html: string) {
     });
     return false;
   }
-  return sendEmail(adminEmail, subject, html);
+  return sendEmail({ to: adminEmail, subject, html });
 }

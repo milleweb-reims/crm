@@ -27,39 +27,39 @@ import { DeliveryList, type DeliveryItem } from "@/components/delivery-list";
 import { useRealtime } from "@/hooks/use-realtime";
 
 interface AdminStats {
-  role: "admin";
-  totalProspects: number;
-  byStatus: Record<string, number>;
-  untreatedStock: number;
-  caThisMonth: number;
-  caPrevMonth: number;
-  salesThisMonth: number;
-  salesPrevMonth: number;
-  leaderboard: LeaderboardEntry[];
-  monthlyTrend: { _id: { year: number; month: number }; count: number }[];
-  todayReminders: number;
+  readonly role: "admin";
+  readonly totalProspects: number;
+  readonly byStatus: Record<string, number>;
+  readonly untreatedStock: number;
+  readonly caThisMonth: number;
+  readonly caPrevMonth: number;
+  readonly salesThisMonth: number;
+  readonly salesPrevMonth: number;
+  readonly leaderboard: readonly LeaderboardEntry[];
+  readonly monthlyTrend: readonly { readonly _id: { readonly year: number; readonly month: number }; readonly count: number }[];
+  readonly todayReminders: number;
 }
 
 interface CloserStats {
-  role: "closer";
-  myProspects: number;
-  callsToday: number;
-  upcomingRdv: number;
-  liensEnvoyes: number;
-  salesThisMonth: number;
-  salesPrevMonth: number;
-  caThisMonth: number;
-  leaderboard: LeaderboardEntry[];
-  todayReminders: number;
+  readonly role: "closer";
+  readonly myProspects: number;
+  readonly callsToday: number;
+  readonly upcomingRdv: number;
+  readonly liensEnvoyes: number;
+  readonly salesThisMonth: number;
+  readonly salesPrevMonth: number;
+  readonly caThisMonth: number;
+  readonly leaderboard: readonly LeaderboardEntry[];
+  readonly todayReminders: number;
 }
 
 interface DevStats {
-  role: "dev";
-  toDeliver: number;
-  missingDevUrl: number;
-  deliveredThisMonth: number;
-  totalPaid: number;
-  deliveryList: DeliveryItem[];
+  readonly role: "dev";
+  readonly toDeliver: number;
+  readonly missingDevUrl: number;
+  readonly deliveredThisMonth: number;
+  readonly totalPaid: number;
+  readonly deliveryList: readonly DeliveryItem[];
 }
 
 type Stats = AdminStats | CloserStats | DevStats;
@@ -130,7 +130,7 @@ function AdminDashboard({ stats }: { stats: AdminStats }) {
           byStatus={stats.byStatus}
           total={stats.totalProspects}
         />
-        <ClosersLeaderboard entries={stats.leaderboard} showCa />
+        <ClosersLeaderboard entries={[...stats.leaderboard]} showCa />
       </div>
 
       <div className="mb-8">
@@ -186,7 +186,7 @@ function CloserDashboard({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <ClosersLeaderboard entries={stats.leaderboard} currentUserId={userId} />
+        <ClosersLeaderboard entries={[...stats.leaderboard]} currentUserId={userId} />
         <div className="space-y-6">
           <StatCard
             title="Mes prospects assignés"
@@ -255,7 +255,10 @@ export default function DashboardPage() {
         setStats(data);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((error) => {
+        console.error("Failed to fetch stats", { error });
+        setLoading(false);
+      });
   }
 
   useEffect(() => { fetchStats(); }, []);

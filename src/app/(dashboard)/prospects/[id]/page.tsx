@@ -21,97 +21,107 @@ import {
   Plus,
   Send,
   BookOpen,
+  Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { PromptGenerator } from "@/components/prompt-generator";
+import { DevUrlCard } from "@/components/dev-url-card";
 import { PaymentLinkCard } from "@/components/payment-link-card";
 import { SalesScript } from "@/components/sales-script";
+import { StatusGuideLink } from "@/components/status-guide";
 import { cn } from "@/lib/utils";
-import { PROSPECT_STATUSES, type IProspect, type IUser, type ProspectStatus, type ActivityType } from "@/types";
+import { DAY_LABELS_FR, formatHoursFr } from "@/lib/format";
+import {
+  PROSPECT_STATUSES,
+  DELIVERY_STAGES,
+  type IProspect,
+  type IUser,
+  type ProspectStatus,
+  type DeliveryStage,
+  type ActivityType,
+} from "@/types";
 import { LOCK_HEARTBEAT_MS, getLockHolder } from "@/lib/lock";
+import { getDeliveryStage } from "@/lib/delivery";
 import { useRealtime } from "@/hooks/use-realtime";
 
-interface ActivityData {
+/**
+ * Activity timeline entry with user and timestamp information.
+ */
+type ActivityData = Readonly<{
   _id: string;
   type: ActivityType;
   content: string;
-  userId: { name: string } | null;
+  userId: Readonly<{ name: string }> | null;
   createdAt: string;
-}
+}>;
 
-// Le statut en boutons : la pipeline dans l'ordre du parcours de vente,
-// chaque étape reprend la couleur de sa colonne (badge & pipeline).
-// Parcours de vente linéaire : on avance étape par étape, sans en sauter.
-// Le retour en arrière est libre (correction) et « Pas intéressé » est une
-// sortie accessible à tout moment ; on en repart par « Prospect ».
-const STATUS_FLOW: ProspectStatus[] = [
-  "prospect",
-  "en_appel",
-  "rdv",
-  "lien_envoye",
-];
+/**
+ * Sales pipeline progression for closers: prospect → en appel → rdv → lien envoyé.
+ * Advances step-by-step without skipping, allows free backward movement for corrections.
+ * "Pas intéressé" and "Payé" are terminal states managed separately.
+ */
+const STATUS_FLOW = ["prospect", "en_appel", "rdv", "lien_envoye"] as const satisfies ReadonlyArray<ProspectStatus>;
 
-function canTransition(from: ProspectStatus, to: ProspectStatus) {
-  // « Payé » est posé par le webhook GoCardless uniquement, et une fiche
-  // payée ne change plus de statut.
+/**
+ * Prospect status should never transition to or from "payé" (webhook-only),
+ * but "pas_interesse" can transition back to "prospect" for re-engagement.
+ * Otherwise progression follows STATUS_FLOW linearly (one step forward or any step backward).
+ */
+function canTransition(from: ProspectStatus, to: ProspectStatus): boolean {
   if (from === "paye" || to === "paye") return false;
   if (to === "pas_interesse") return true;
   if (from === "pas_interesse") return to === "prospect";
   return STATUS_FLOW.indexOf(to) <= STATUS_FLOW.indexOf(from) + 1;
 }
 
-const DAY_LABELS_FR: Record<string, string> = {
-  monday: "Lundi",
-  tuesday: "Mardi",
-  wednesday: "Mercredi",
-  thursday: "Jeudi",
-  friday: "Vendredi",
-  saturday: "Samedi",
-  sunday: "Dimanche",
-};
+/**
+ * Developer delivery pipeline (independent of sales status).
+ * Advances step-by-step without skipping, allows free backward movement for corrections.
+ * Devs never modify sales status directly.
+ */
+const DELIVERY_FLOW = DELIVERY_STAGES.map((s) => s.value) as ReadonlyArray<DeliveryStage>;
 
-// Convertit les valeurs Google du type "7-am-11-pm", "7:30-am-11-pm" ou
-// "730-am-6-pm" (minutes sans deux-points) en "7h – 23h" / "7h30 – 18h".
-function formatHoursFr(raw: string): string {
-  const lower = raw.toLowerCase().trim();
-  if (lower === "closed") return "Fermé";
-  if (lower === "open-24-hours" || lower === "open 24 hours") return "24h/24";
-
-  const toFr = (h: number, min: string | undefined, meridiem: string) => {
-    let hour = h % 12;
-    if (meridiem === "pm") hour += 12;
-    return `${hour}h${min ?? ""}`;
-  };
-
-  const match = lower.match(
-    /^(\d{1,2})(?::?(\d{2}))?-(am|pm)-(\d{1,2})(?::?(\d{2}))?-(am|pm)$/
-  );
-  if (!match) return raw;
-  const [, h1, m1, mer1, h2, m2, mer2] = match;
-  return `${toFr(Number(h1), m1, mer1!)} – ${toFr(Number(h2), m2, mer2!)}`;
+/**
+ * Delivery stage advancement allows one-step forward or any-step backward only.
+ */
+function canChangeDeliveryStage(from: DeliveryStage, to: DeliveryStage): boolean {
+  return DELIVERY_FLOW.indexOf(to) <= DELIVERY_FLOW.indexOf(from) + 1;
 }
 
-const statusPillStyles: Record<ProspectStatus, { active: string; dot: string }> = {
+/**
+ * Visual styles (border, background, text color) for delivery stage pills.
+ */
+const deliveryStagePillStyles = {
+  a_faire: { active: "border-gray-300 bg-gray-100 text-gray-700", dot: "bg-gray-400" },
+  en_cours: { active: "border-blue-300 bg-blue-100 text-blue-700", dot: "bg-blue-400" },
+  termine: { active: "border-green-300 bg-green-100 text-green-700", dot: "bg-green-500" },
+} as const satisfies Readonly<Record<DeliveryStage, Readonly<{ active: string; dot: string }>>>;
+
+/**
+ * Visual styles (border, background, text color) for prospect status pills.
+ */
+const statusPillStyles = {
   prospect: { active: "border-gray-300 bg-gray-100 text-gray-700", dot: "bg-gray-400" },
   en_appel: { active: "border-amber-300 bg-amber-100 text-amber-700", dot: "bg-amber-400" },
   rdv: { active: "border-blue-300 bg-blue-100 text-blue-700", dot: "bg-blue-400" },
   lien_envoye: { active: "border-violet-300 bg-violet-100 text-violet-700", dot: "bg-violet-400" },
   paye: { active: "border-green-300 bg-green-100 text-green-700", dot: "bg-green-500" },
   pas_interesse: { active: "border-red-300 bg-red-100 text-red-700", dot: "bg-red-400" },
-};
+} as const satisfies Readonly<Record<ProspectStatus, Readonly<{ active: string; dot: string }>>>;
 
 export default function ProspectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { data: session } = useSession();
   const [prospect, setProspect] = useState<IProspect | null>(null);
-  const [activities, setActivities] = useState<ActivityData[]>([]);
+  const [activities, setActivities] = useState<ReadonlyArray<ActivityData>>([]);
   const [loading, setLoading] = useState(true);
   const [rdvModalOpen, setRdvModalOpen] = useState(false);
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
   const [savingRdv, setSavingRdv] = useState(false);
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailInput, setEmailInput] = useState("");
@@ -123,17 +133,26 @@ export default function ProspectDetailPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailSentTo, setEmailSentTo] = useState<string | null>(null);
   const [rdvDateTime, setRdvDateTime] = useState("");
-  // init = on décide, held = pris par un autre closer, mine = verrou acquis,
-  // admin = navigation libre sans verrou (l'admin ne verrouille jamais)
+  /**
+   * Lock acquisition state:
+   * - "init": deciding (first load)
+   * - "held": taken by another closer, cannot acquire
+   * - "mine": lock acquired, can edit
+   * - "admin": admin/dev free navigation mode (never locks themselves)
+   */
   const [lockState, setLockState] = useState<"init" | "held" | "mine" | "admin">("init");
   const [lockHolder, setLockHolder] = useState<{ _id: string; name: string } | null>(null);
-  // Fiche réservée (attribuée à un autre closer) : pas de prise possible
+  /**
+   * Prospect permanently assigned to another closer: lock cannot be acquired (terminal state).
+   */
   const [reservedBy, setReservedBy] = useState<string | null>(null);
-  const [closers, setClosers] = useState<IUser[]>([]);
+  const [closers, setClosers] = useState<ReadonlyArray<IUser>>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const isAdmin = session?.user?.role === "admin";
-  const canSeePrompt = isAdmin || session?.user?.role === "dev";
+  const isDev = session?.user?.role === "dev";
+  const canSeePrompt = isAdmin || isDev;
+  const userId = session?.user?.id;
 
   const assigned =
     prospect?.assignedTo && typeof prospect.assignedTo === "object"
@@ -143,26 +162,53 @@ export default function ProspectDetailPage() {
     assigned?._id ??
     (typeof prospect?.assignedTo === "string" ? prospect.assignedTo : null);
 
-  const fetchData = useCallback(async () => {
+  /**
+   * Pure fetcher (no state updates) so effects can call it and apply
+   * results in a callback, where setState is legitimate.
+   */
+  const loadData = useCallback(async () => {
     const [prospectRes, activitiesRes] = await Promise.all([
       fetch(`/api/prospects/${id}`),
       fetch(`/api/activities?prospectId=${id}`),
     ]);
 
-    if (prospectRes.ok) setProspect(await prospectRes.json());
-    if (activitiesRes.ok) setActivities(await activitiesRes.json());
-    setLoading(false);
+    return {
+      freshProspect: prospectRes.ok
+        ? ((await prospectRes.json()) as IProspect)
+        : null,
+      freshActivities: activitiesRes.ok
+        ? ((await activitiesRes.json()) as ActivityData[])
+        : null,
+    };
   }, [id]);
+
+  const fetchData = useCallback(() => {
+    loadData()
+      .then(({ freshProspect, freshActivities }) => {
+        if (freshProspect) setProspect(freshProspect);
+        if (freshActivities) setActivities(freshActivities);
+      })
+      .catch(() => {
+        // Network unavailable: next SSE event or user action retries
+      })
+      .finally(() => setLoading(false));
+  }, [loadData]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Temps réel : paiement reçu (webhook GoCardless), modifications d'un autre
-  // utilisateur... → la fiche se met à jour sans recharger la page.
+  /**
+   * Realtime SSE updates: GoCardless payment webhooks, other user modifications → auto-refresh without page reload.
+   */
   useRealtime(fetchData);
 
-  // Prendre le prospect = acquérir le verrou côté serveur
+  /**
+   * Acquire prospect lock via server endpoint.
+   * On success: immediately update local state to prevent stale lock detection.
+   * On 423 conflict: prospect is reserved or held by another closer.
+   * Network errors allow user retry via overlay.
+   */
   const takeProspect = useCallback(
     async (force = false) => {
       try {
@@ -173,9 +219,6 @@ export default function ProspectDetailPage() {
         });
         if (res.ok) {
           setLockHolder(null);
-          // Reflète le verrou localement tout de suite : évite qu'une donnée
-          // périmée (ancien détenteur) déclenche la détection de perte de verrou
-          const userId = session?.user?.id;
           if (userId) {
             setProspect((p) =>
               p ? { ...p, lockedBy: userId, lockedAt: new Date() } : p
@@ -192,20 +235,26 @@ export default function ProspectDetailPage() {
           setLockState("held");
         }
       } catch {
-        // réseau indisponible : l'overlay reste affiché, l'utilisateur peut réessayer
+        // Network unavailable: overlay remains, user can retry
       }
     },
-    [id, session?.user?.id]
+    [id, userId]
   );
 
-  // À l'arrivée sur la fiche : admin → navigation libre sans verrou ;
-  // réservée à un autre closer → "held" sans prise possible ;
-  // déjà prise par un autre → "held" ;
-  // sinon → verrou acquis automatiquement dès l'ouverture de la fiche.
+  /**
+   * Initialize lock state on page load:
+   * - Admin/Dev: free navigation mode (devs don't participate in sales assignment, never blocked)
+   * - Reserved to another closer: "held" (terminal, no acquisition possible)
+   * - Already held by another: "held" (acquisition waits for release)
+   * - Otherwise: auto-acquire lock immediately on page load
+   */
+  /* eslint-disable react-hooks/set-state-in-effect -- One-shot state-machine
+     transition guarded by lockState === "init": runs once when prospect and
+     session are both available (session arrival is only observable here). */
   useEffect(() => {
     if (lockState !== "init" || !prospect || !session?.user?.id) return;
 
-    if (session.user.role === "admin") {
+    if (session.user.role === "admin" || session.user.role === "dev") {
       setLockHolder(getLockHolder(prospect, session.user.id));
       setLockState("admin");
       return;
@@ -233,23 +282,32 @@ export default function ProspectDetailPage() {
 
     takeProspect();
   }, [lockState, prospect, session, takeProspect]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Verrou acquis : heartbeat pour le garder, libération en quittant la fiche
-  // (sauf statut "en_appel" — le serveur conserve alors le verrou).
+  /**
+   * Lock maintenance heartbeat: periodically refresh lock while editing.
+   * Release lock on page exit via pagehide event (browser/tab close).
+   * Detect admin force-take via 423 conflict and revert to "held".
+   * Except "en_appel" status: server retains lock across navigation.
+   */
   useEffect(() => {
     if (lockState !== "mine") return;
 
+    async function refreshLockHeartbeat() {
+      try {
+        const res = await fetch(`/api/prospects/${id}/lock`, { method: "POST" });
+        if (res.status !== 423) return;
+
+        const data = await res.json().catch(() => ({}));
+        setLockHolder(data.lockedBy ?? { _id: "", name: "un autre utilisateur" });
+        setLockState("held");
+      } catch {
+        // Network error: retry on next interval
+      }
+    }
+
     const heartbeat = setInterval(() => {
-      fetch(`/api/prospects/${id}/lock`, { method: "POST" })
-        .then(async (res) => {
-          // Verrou perdu (un admin a forcé la prise) : la fiche se bloque
-          if (res.status === 423) {
-            const data = await res.json().catch(() => ({}));
-            setLockHolder(data.lockedBy ?? { _id: "", name: "un autre utilisateur" });
-            setLockState("held");
-          }
-        })
-        .catch(() => {});
+      refreshLockHeartbeat();
     }, LOCK_HEARTBEAT_MS);
 
     function releaseLock() {
@@ -266,8 +324,13 @@ export default function ProspectDetailPage() {
     };
   }, [lockState, id]);
 
-  // Perte du verrou détectée via le temps réel (un admin a forcé la prise) :
-  // la fiche se verrouille immédiatement chez le closer qui la tenait.
+  /**
+   * Lock loss detection via realtime prospect update:
+   * Admin force-take detected when prospect.lockedBy changes → immediately transition to "held".
+   */
+  /* eslint-disable react-hooks/set-state-in-effect -- Guarded "mine" → "held"
+     transition reacting to server-driven prospect updates (SSE refresh);
+     fires at most once per lock loss, cannot cascade. */
   useEffect(() => {
     if (lockState !== "mine" || !prospect || !session?.user?.id) return;
 
@@ -277,11 +340,16 @@ export default function ProspectDetailPage() {
       setLockState("held");
     }
   }, [lockState, prospect, session?.user?.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Bandeau admin en temps réel : le détenteur du verrou est recalculé quand la
-  // fiche se rafraîchit (SSE prospect:updated émis à la prise/libération) et
-  // périodiquement, car getLockHolder dépend de l'horloge (expiration du TTL
-  // sans libération explicite : crash, fermeture brutale du navigateur...).
+  /**
+   * Admin realtime lock holder banner: refresh on prospect update (SSE lock acquisition/release)
+   * and periodically since getLockHolder depends on clock (TTL expiry without explicit release
+   * from crashes or abrupt browser closes).
+   */
+  /* eslint-disable react-hooks/set-state-in-effect -- The synchronous call
+     refreshes the banner immediately when prospect changes (SSE update);
+     the value converges (getLockHolder is derived data), no cascade. */
   useEffect(() => {
     if (lockState !== "admin" || !prospect) return;
 
@@ -291,9 +359,13 @@ export default function ProspectDetailPage() {
     }, 15_000);
     return () => clearInterval(interval);
   }, [lockState, prospect, session?.user?.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Fiche tenue par un autre : on surveille sa libération pour proposer la prise
-  // (sauf fiche réservée : l'attribution ne se libère pas toute seule)
+  /**
+   * Monitor held lock for release opportunity: poll prospect for lock expiry
+   * and auto-acquire when available. Reserved prospects never auto-release
+   * (permanent assignment, no polling needed).
+   */
   useEffect(() => {
     if (lockState !== "held" || reservedBy) return;
 
@@ -311,14 +383,16 @@ export default function ProspectDetailPage() {
           setLockHolder(holder);
         }
       } catch {
-        // réseau indisponible : on réessaiera au prochain tick
+        // Network unavailable: retry on next interval
       }
     }, 15_000);
 
     return () => clearInterval(interval);
-  }, [lockState, reservedBy, id, session?.user?.id]);
+  }, [lockState, reservedBy, id, session?.user?.id, takeProspect]);
 
-  // Liste des closers actifs pour le sélecteur d'attribution (admin uniquement)
+  /**
+   * Load active closers list for admin assignment selector.
+   */
   useEffect(() => {
     if (!isAdmin) return;
     fetch("/api/users")
@@ -329,8 +403,10 @@ export default function ProspectDetailPage() {
       .catch(() => {});
   }, [isAdmin]);
 
+  /**
+   * Transition prospect status (except RDV which requires modal date/time input).
+   */
   async function handleStatusChange(newStatus: string) {
-    // Le passage en RDV demande d'abord la date/heure du rendez-vous
     if (newStatus === "rdv") {
       setRdvDateTime("");
       setRdvModalOpen(true);
@@ -373,6 +449,27 @@ export default function ProspectDetailPage() {
     } finally {
       setSavingRdv(false);
     }
+  }
+
+  /**
+   * Advance or retreat delivery stage. Moving to "termine" stamps deliveredDate
+   * for delivery stats; exiting "termine" clears it (correction).
+   */
+  async function handleDeliveryStageChange(newStage: DeliveryStage) {
+    setStatusError(null);
+    const res = await fetch(`/api/prospects/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deliveryStage: newStage,
+        deliveredDate: newStage === "termine" ? new Date().toISOString() : null,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setStatusError(data.error || "Impossible de changer l'étape");
+    }
+    fetchData();
   }
 
   async function handleAssign(userId: string) {
@@ -438,7 +535,9 @@ export default function ProspectDetailPage() {
       setEmailModalOpen(false);
       setEmailSubject("");
       setEmailMessage("");
-      // Confirmation visible quelques secondes dans la carte Contact
+      /**
+       * Show email sent confirmation badge in Contact card for 6 seconds.
+       */
       setEmailSentTo(data.to || prospect?.email || "");
       setTimeout(() => setEmailSentTo(null), 6000);
       fetchData();
@@ -485,7 +584,7 @@ export default function ProspectDetailPage() {
 
   return (
     <>
-      {/* En-tête : retour + identité + actions */}
+      {/* Page header: back button, prospect identity, admin/dev actions */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-2 min-w-0">
           <Button
@@ -536,15 +635,27 @@ export default function ProspectDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            className="h-9"
-            onClick={() => setScriptModalOpen(true)}
-            data-test="sales-script"
-          >
-            <BookOpen className="h-4 w-4" />
-            Script de vente
-          </Button>
+          {isDev ? (
+            <Button
+              variant="outline"
+              className="h-9"
+              onClick={() => setPromptModalOpen(true)}
+              data-test="prompt-claude-design"
+            >
+              <Wand2 className="h-4 w-4" />
+              Prompt Claude Design
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              className="h-9"
+              onClick={() => setScriptModalOpen(true)}
+              data-test="sales-script"
+            >
+              <BookOpen className="h-4 w-4" />
+              Script de vente
+            </Button>
+          )}
           {isAdmin && (
             <select
               value={assignedId ?? ""}
@@ -558,7 +669,7 @@ export default function ProspectDetailPage() {
                   {c.name}
                 </option>
               ))}
-              {/* Closer attribué absent de la liste (désactivé...) : rester affichable */}
+              {/* Assigned closer missing from active list (disabled): still displayed for continuity */}
               {assigned && !closers.some((c) => c._id === assigned._id) && (
                 <option value={assigned._id}>{assigned.name}</option>
               )}
@@ -572,53 +683,108 @@ export default function ProspectDetailPage() {
         </div>
       </div>
 
-      {/* Statut : la pipeline en boutons — un clic pour changer d'étape */}
-      <div
-        role="group"
-        aria-label="Statut du prospect"
-        className="mb-6 flex flex-wrap items-center gap-1.5"
-      >
-        {PROSPECT_STATUSES.map((s) => {
-          const isActive = prospect.status === s.value;
-          const canChangeStatus =
-            lockState === "mine" || lockState === "admin";
-          const reachable = canTransition(
-            prospect.status as ProspectStatus,
-            s.value
-          );
-          const enabled = canChangeStatus && !isActive && reachable;
-          return (
-            <button
-              key={s.value}
-              type="button"
-              aria-pressed={isActive}
-              disabled={!enabled}
-              title={
-                !isActive && !reachable
-                  ? "Étape non accessible : le parcours se fait étape par étape"
-                  : undefined
-              }
-              onClick={() => handleStatusChange(s.value)}
-              data-test={`status-${s.value}`}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                isActive
-                  ? cn(statusPillStyles[s.value].active, "shadow-sm")
-                  : "border-border bg-background text-muted-foreground",
-                enabled && "cursor-pointer hover:bg-muted hover:text-foreground",
-                !isActive && !enabled && "opacity-40 cursor-not-allowed"
-              )}
-            >
-              <span
-                className={cn("h-2 w-2 rounded-full", statusPillStyles[s.value].dot)}
-              />
-              {s.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Demo site link: admin/dev only, independent of Prompt Claude Design */}
+      {canSeePrompt && (
+        <DevUrlCard
+          prospectId={prospect._id}
+          devUrl={prospect.devUrl}
+          onUpdated={fetchData}
+        />
+      )}
 
-      {/* Bandeau admin : un closer est actuellement sur la fiche */}
+      {/* Status pipeline for closers/admins (sales progression), delivery pipeline for devs only (site workflow).
+          Devs never see or modify sales status. */}
+      {isDev ? (
+        <div
+          role="group"
+          aria-label="Étape de livraison du site"
+          className="mb-6 flex flex-wrap items-center gap-1.5"
+        >
+          {DELIVERY_STAGES.map((s) => {
+            const currentStage = getDeliveryStage(prospect);
+            const isActive = currentStage === s.value;
+            const canChangeStage = lockState === "mine" || lockState === "admin";
+            const reachable = canChangeDeliveryStage(currentStage, s.value);
+            const enabled = canChangeStage && !isActive && reachable;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                aria-pressed={isActive}
+                disabled={!enabled}
+                title={
+                  !isActive && !reachable
+                    ? "Étape non accessible : on avance une étape à la fois"
+                    : undefined
+                }
+                onClick={() => handleDeliveryStageChange(s.value)}
+                data-test={`delivery-stage-${s.value}`}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? cn(deliveryStagePillStyles[s.value].active, "shadow-sm")
+                    : "border-border bg-background text-muted-foreground",
+                  enabled && "cursor-pointer hover:bg-muted hover:text-foreground",
+                  !isActive && !enabled && "opacity-40 cursor-not-allowed"
+                )}
+              >
+                <span
+                  className={cn("h-2 w-2 rounded-full", deliveryStagePillStyles[s.value].dot)}
+                />
+                {s.label}
+              </button>
+            );
+          })}
+          <StatusGuideLink className="sm:ml-auto" />
+        </div>
+      ) : (
+        <div
+          role="group"
+          aria-label="Statut du prospect"
+          className="mb-6 flex flex-wrap items-center gap-1.5"
+        >
+          {PROSPECT_STATUSES.map((s) => {
+            const isActive = prospect.status === s.value;
+            const canChangeStatus = lockState === "mine" || lockState === "admin";
+            const reachable = canTransition(
+              prospect.status as ProspectStatus,
+              s.value
+            );
+            const enabled = canChangeStatus && !isActive && reachable;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                aria-pressed={isActive}
+                disabled={!enabled}
+                title={
+                  !isActive && !reachable
+                    ? "Étape non accessible : le parcours se fait étape par étape"
+                    : undefined
+                }
+                onClick={() => handleStatusChange(s.value)}
+                data-test={`status-${s.value}`}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? cn(statusPillStyles[s.value].active, "shadow-sm")
+                    : "border-border bg-background text-muted-foreground",
+                  enabled && "cursor-pointer hover:bg-muted hover:text-foreground",
+                  !isActive && !enabled && "opacity-40 cursor-not-allowed"
+                )}
+              >
+                <span
+                  className={cn("h-2 w-2 rounded-full", statusPillStyles[s.value].dot)}
+                />
+                {s.label}
+              </button>
+            );
+          })}
+          <StatusGuideLink className="sm:ml-auto" />
+        </div>
+      )}
+
+      {/* Admin banner: display active closer with force-take option */}
       {lockState === "admin" && lockHolder && (
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
           <span className="inline-flex items-center gap-2">
@@ -631,14 +797,14 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* Erreur de changement de statut (fiche verrouillée, conflit...) */}
+      {/* Status change error: lock conflict or validation failure */}
       {statusError && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
           {statusError}
         </div>
       )}
 
-      {/* Infos contextuelles : paiement reçu, RDV planifié */}
+      {/* Contextual info badges: payment received, RDV scheduled */}
       {(prospect.paidAt || prospect.rdvDate) && (
         <div className="mb-6 flex flex-wrap gap-2">
           {prospect.paidAt && (
@@ -674,14 +840,17 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* Devis, contact et horaires sur une même rangée, à hauteur égale */}
+      {/* Three equal-height cards: payment (closers/admins only), contact, opening hours.
+          Devs skip payment card (accessed via header button instead). */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-        <PaymentLinkCard
-          prospect={prospect}
-          onUpdated={fetchData}
-          canEditQuote={isAdmin}
-          className="h-full"
-        />
+        {!isDev && (
+          <PaymentLinkCard
+            prospect={prospect}
+            onUpdated={fetchData}
+            canEditQuote={isAdmin}
+            className="h-full"
+          />
+        )}
           <Card className="h-full">
             <CardTitle>Contact</CardTitle>
             <CardContent className="space-y-3 mt-3">
@@ -855,14 +1024,14 @@ export default function ProspectDetailPage() {
           )}
       </div>
 
-      {/* Prompt Claude Design — réservé admin & dev, pleine largeur */}
-      {canSeePrompt && (
+      {/* Prompt Claude Design: full-width for admins (devs access via header button modal) */}
+      {isAdmin && (
         <div className="mt-6">
           <PromptGenerator prospect={prospect} />
         </div>
       )}
 
-      {/* Activity Timeline — pleine largeur en bas de page */}
+      {/* Activity timeline: full-width at bottom of page */}
       <Card className="mt-6">
         <CardTitle>Activité</CardTitle>
         <CardContent className="mt-4">
@@ -873,8 +1042,7 @@ export default function ProspectDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Overlay de prise du prospect : la fiche reste floutée tant que le
-          verrou n'est pas acquis */}
+      {/* Lock overlay: page remains blurred until lock acquired (reserved or held by another) */}
       {lockState !== "mine" && lockState !== "admin" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 backdrop-blur-md p-4">
           <div className="w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-xl text-center">
@@ -930,7 +1098,7 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* Email modal : envoi d'un message au prospect avec l'adresse Milleweb */}
+      {/* Email modal: send message to prospect from Milleweb email address */}
       {emailModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -993,7 +1161,7 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* Script de vente : la fiche closer s'affiche dans la fiche, sans quitter la page */}
+      {/* Sales script modal: closer reference displayed without leaving page */}
       {scriptModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -1020,7 +1188,34 @@ export default function ProspectDetailPage() {
         </div>
       )}
 
-      {/* RDV modal */}
+      {/* Prompt Claude Design modal: dev access via header button, stays within page */}
+      {promptModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPromptModalOpen(false)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl bg-background border border-border p-5 shadow-lg overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-primary" />
+                Prompt Claude Design
+              </h2>
+              <button
+                onClick={() => setPromptModalOpen(false)}
+                className="text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <PromptGenerator prospect={prospect} alwaysOpen />
+          </div>
+        </div>
+      )}
+
+      {/* RDV scheduling modal: date/time input for prospect appointment */}
       {rdvModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"

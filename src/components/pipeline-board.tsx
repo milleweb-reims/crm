@@ -8,120 +8,362 @@ import {
   type DropResult,
 } from "@hello-pangea/dnd";
 import { Phone, MapPin, User, AlertCircle, Lock } from "lucide-react";
-import { PROSPECT_STATUSES, type IProspect, type ProspectStatus } from "@/types";
+import {
+  PROSPECT_STATUSES,
+  DELIVERY_STAGES,
+  type IProspect,
+  type ProspectStatus,
+  type DeliveryStage,
+} from "@/types";
+import { getDeliveryStage } from "@/lib/delivery";
 import { getLockHolder } from "@/lib/lock";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useRealtime } from "@/hooks/use-realtime";
 
-const columnStyles: Record<ProspectStatus, { bg: string; header: string; headerText: string; card: string; badge: string; dragOver: string }> = {
+interface ColumnStyle {
+  readonly bg: string;
+  readonly header: string;
+  readonly headerText: string;
+  readonly card: string;
+  readonly badge: string;
+  readonly dragOver: string;
+}
+
+const statusColumnStyles = {
   prospect: { bg: "bg-gray-50", header: "bg-gray-100", headerText: "text-gray-700", card: "border-t-gray-400", badge: "bg-gray-200 text-gray-600", dragOver: "bg-gray-100" },
   en_appel: { bg: "bg-amber-50", header: "bg-amber-100", headerText: "text-amber-700", card: "border-t-amber-400", badge: "bg-amber-200 text-amber-700", dragOver: "bg-amber-100" },
   rdv: { bg: "bg-blue-50", header: "bg-blue-100", headerText: "text-blue-700", card: "border-t-blue-400", badge: "bg-blue-200 text-blue-700", dragOver: "bg-blue-100" },
   lien_envoye: { bg: "bg-violet-50", header: "bg-violet-100", headerText: "text-violet-700", card: "border-t-violet-400", badge: "bg-violet-200 text-violet-700", dragOver: "bg-violet-100" },
   paye: { bg: "bg-green-50", header: "bg-green-100", headerText: "text-green-700", card: "border-t-green-400", badge: "bg-green-200 text-green-700", dragOver: "bg-green-100" },
   pas_interesse: { bg: "bg-red-50", header: "bg-red-100", headerText: "text-red-700", card: "border-t-red-400", badge: "bg-red-200 text-red-700", dragOver: "bg-red-100" },
-};
+} as const satisfies Record<ProspectStatus, ColumnStyle>;
+
+const deliveryColumnStyles = {
+  a_faire: { bg: "bg-gray-50", header: "bg-gray-100", headerText: "text-gray-700", card: "border-t-gray-400", badge: "bg-gray-200 text-gray-600", dragOver: "bg-gray-100" },
+  en_cours: { bg: "bg-blue-50", header: "bg-blue-100", headerText: "text-blue-700", card: "border-t-blue-400", badge: "bg-blue-200 text-blue-700", dragOver: "bg-blue-100" },
+  termine: { bg: "bg-green-50", header: "bg-green-100", headerText: "text-green-700", card: "border-t-green-400", badge: "bg-green-200 text-green-700", dragOver: "bg-green-100" },
+} as const satisfies Record<DeliveryStage, ColumnStyle>;
+
+/**
+ * Initialize empty prospect columns from stage identifiers.
+ * @param keys - Array of column keys to initialize
+ * @returns Record mapping each key to an empty array
+ */
+function initializeEmptyColumns(keys: readonly string[]): Record<string, IProspect[]> {
+  return Object.fromEntries(keys.map(key => [key, []]));
+}
+
+interface GroupProspectsOptions {
+  readonly prospects: readonly IProspect[];
+  readonly isDev: boolean;
+}
+
+/**
+ * Group prospects by their current stage (dev view) or status (sales view).
+ * @param options - Prospects list and role flag
+ * @returns Prospects grouped by column key
+ */
+function groupProspectsByStage(options: GroupProspectsOptions): Record<string, IProspect[]> {
+  return options.prospects.reduce((acc, prospect) => {
+    const key = options.isDev ? getDeliveryStage(prospect) : prospect.status;
+    return {
+      ...acc,
+      [key]: [...(acc[key] ?? []), prospect],
+    };
+  }, {} as Record<string, IProspect[]>);
+}
+
+interface MergeProspectsOptions {
+  readonly prospects: readonly IProspect[];
+  readonly keys: readonly string[];
+  readonly isDev: boolean;
+}
+
+/**
+ * Merge fetched prospects into initialized columns, grouping by stage/status.
+ * @param options - Prospects from API, column keys, and view mode
+ * @returns Columns with prospects distributed by current stage
+ */
+function mergeProspectsIntoColumns(options: MergeProspectsOptions): Record<string, IProspect[]> {
+  const empty = initializeEmptyColumns(options.keys);
+  const grouped = groupProspectsByStage({
+    prospects: options.prospects,
+    isDev: options.isDev,
+  });
+  return { ...empty, ...grouped };
+}
+
+interface DragValidationResult {
+  readonly isValid: boolean;
+  readonly movedProspect?: IProspect;
+  readonly sourceKey: string;
+  readonly destKey: string;
+}
+
+/**
+ * Validate drag operation and extract moved prospect.
+ * Checks destination exists, item exists, and move is not a no-op.
+ * @param options - Current columns state and drag result
+ * @returns Validation outcome with extracted prospect if valid
+ */
+function validateDragOperation(options: {
+  readonly columns: Record<string, IProspect[]>;
+  readonly result: DropResult;
+}): DragValidationResult {
+  const { source, destination } = options.result;
+  const sourceKey = source.droppableId;
+
+  if (!destination) {
+    return { isValid: false, sourceKey, destKey: "" };
+  }
+
+  const destKey = destination.droppableId;
+
+  if (sourceKey === destKey && source.index === destination.index) {
+    return { isValid: false, sourceKey, destKey };
+  }
+
+  const sourceCol = options.columns[sourceKey] ?? [];
+  const movedProspect = sourceCol[source.index];
+
+  if (!movedProspect) {
+    return { isValid: false, sourceKey, destKey };
+  }
+
+  return {
+    isValid: true,
+    movedProspect,
+    sourceKey,
+    destKey,
+  };
+}
+
+interface UpdateProspectOptions {
+  readonly prospect: IProspect;
+  readonly destKey: string;
+  readonly isDev: boolean;
+}
+
+/**
+ * Compute prospect with updated stage/status after cross-column move.
+ * Encodes stage-specific logic: dev sets deliveryStage + deliveredDate, others set status.
+ * @param options - Prospect, destination column, and role flag
+ * @returns Updated prospect with new stage/status
+ */
+function computeUpdatedProspect(options: UpdateProspectOptions): IProspect {
+  const { prospect, destKey, isDev } = options;
+  if (!isDev) {
+    return { ...prospect, status: destKey as ProspectStatus };
+  }
+  return {
+    ...prospect,
+    deliveryStage: destKey as DeliveryStage,
+    deliveredDate: destKey === "termine" ? new Date() : null,
+  };
+}
+
+interface ComputeColumnsOptions {
+  readonly columns: Record<string, IProspect[]>;
+  readonly sourceKey: string;
+  readonly destKey: string;
+  readonly sourceIndex: number;
+  readonly destIndex: number;
+  readonly movedProspect: IProspect;
+}
+
+/**
+ * Compute new column state after move (same-column reorder or cross-column transfer).
+ * Handles reordering logic and cross-column insertion.
+ * @param options - Current columns, source/dest keys/indices, and prospect to insert
+ * @returns New columns record with updated state
+ */
+function computeNextColumnsState(options: ComputeColumnsOptions): Record<string, IProspect[]> {
+  const { columns, sourceKey, destKey, sourceIndex, destIndex, movedProspect } = options;
+  const newColumns = { ...columns };
+  const sourceCol = [...(newColumns[sourceKey] ?? [])];
+  sourceCol.splice(sourceIndex, 1);
+
+  if (sourceKey === destKey) {
+    sourceCol.splice(destIndex, 0, movedProspect);
+    newColumns[sourceKey] = sourceCol;
+  } else {
+    const destCol = [...(newColumns[destKey] ?? [])];
+    destCol.splice(destIndex, 0, movedProspect);
+    newColumns[sourceKey] = sourceCol;
+    newColumns[destKey] = destCol;
+  }
+
+  return newColumns;
+}
+
+interface PersistenceBodyOptions {
+  readonly isDev: boolean;
+  readonly destKey: string;
+}
+
+/**
+ * Compute request body for server persistence based on view mode and target column.
+ * @param options - Role flag and destination column
+ * @returns Request body for PATCH endpoint
+ */
+function computePersistenceBody(options: PersistenceBodyOptions): Record<string, unknown> {
+  const { isDev, destKey } = options;
+  if (!isDev) {
+    return { status: destKey };
+  }
+  return {
+    deliveryStage: destKey,
+    deliveredDate: destKey === "termine" ? new Date().toISOString() : null,
+  };
+}
+
+interface SyncProspectOptions {
+  readonly prospectId: string;
+  readonly body: Record<string, unknown>;
+  readonly onConflict: (error: string) => void;
+  readonly onError: () => void;
+}
+
+/**
+ * Persist drag operation to server and handle conflict/error rollback.
+ * Implements optimistic update pattern with rollback on 409/423/error.
+ * @param options - Prospect ID, request body, and failure callbacks
+ */
+async function syncProspectChanges(options: SyncProspectOptions): Promise<void> {
+  const { prospectId, body, onConflict, onError } = options;
+  const res = await fetch(`/api/prospects/${prospectId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 409 || res.status === 423) {
+    const data = await res.json();
+    onConflict(data.error);
+  } else if (!res.ok) {
+    onError();
+  }
+}
 
 export function PipelineBoard() {
   const router = useRouter();
-  const { data: session } = useSession();
-  const [columns, setColumns] = useState<Record<ProspectStatus, IProspect[]>>(
-    () => {
-      const initial: Record<string, IProspect[]> = {};
-      for (const s of PROSPECT_STATUSES) {
-        initial[s.value] = [];
-      }
-      return initial as Record<ProspectStatus, IProspect[]>;
-    }
-  );
+  const { data: session, status: sessionStatus } = useSession();
+  const isDev = session?.user?.role === "dev";
+
+  const columnDefs = isDev
+    ? DELIVERY_STAGES.map((s) => ({
+        value: s.value as string,
+        label: s.label,
+        styles: deliveryColumnStyles[s.value],
+      }))
+    : PROSPECT_STATUSES.map((s) => ({
+        value: s.value as string,
+        label: s.label,
+        styles: statusColumnStyles[s.value],
+      }));
+
+  const [columns, setColumns] = useState<Record<string, IProspect[]>>({});
   const [loading, setLoading] = useState(true);
   const [conflictMsg, setConflictMsg] = useState("");
 
-  const fetchProspects = useCallback(async () => {
-    const res = await fetch("/api/prospects?limit=500");
+  const loadProspects = useCallback(async () => {
+    const res = await fetch(
+      isDev
+        ? "/api/prospects?limit=500&view=delivery"
+        : "/api/prospects?limit=500"
+    );
     const data = await res.json();
 
-    const grouped: Record<string, IProspect[]> = {};
-    for (const s of PROSPECT_STATUSES) {
-      grouped[s.value] = [];
-    }
+    const keys = isDev
+      ? DELIVERY_STAGES.map((s) => s.value as string)
+      : PROSPECT_STATUSES.map((s) => s.value as string);
 
-    for (const prospect of data.prospects) {
-      if (grouped[prospect.status]) {
-        grouped[prospect.status].push(prospect);
-      }
-    }
+    return mergeProspectsIntoColumns({
+      prospects: data.prospects,
+      keys,
+      isDev,
+    });
+  }, [isDev]);
 
-    setColumns(grouped as Record<ProspectStatus, IProspect[]>);
-    setLoading(false);
-  }, []);
+  const fetchProspects = useCallback(() => {
+    loadProspects()
+      .then((merged) => {
+        setColumns(merged);
+      })
+      .catch(() => {
+        // Network unavailable: next poll or SSE event retries
+      })
+      .finally(() => setLoading(false));
+  }, [loadProspects]);
 
   useEffect(() => {
+    if (sessionStatus === "loading") return;
     fetchProspects();
-  }, [fetchProspects]);
+  }, [sessionStatus, fetchProspects]);
 
-  // Real-time: refresh when other users make changes
   useRealtime(() => {
     fetchProspects();
   });
 
-  // Filet de sécurité : le SSE ne couvre pas tous les cas (bus en mémoire,
-  // multi-process...) — on rafraîchit aussi le board par polling.
   useEffect(() => {
     const interval = setInterval(fetchProspects, 10_000);
     return () => clearInterval(interval);
   }, [fetchProspects]);
 
-  async function handleDragEnd(result: DropResult) {
-    const { source, destination, draggableId } = result;
+  async function handleDragEnd(result: DropResult): Promise<void> {
+    const { destination, draggableId, source } = result;
+
     if (!destination) return;
-    if (
-      source.droppableId === destination.droppableId &&
-      source.index === destination.index
-    ) {
-      return;
-    }
 
-    const sourceStatus = source.droppableId as ProspectStatus;
-    const destStatus = destination.droppableId as ProspectStatus;
+    const validation = validateDragOperation({
+      columns,
+      result,
+    });
 
-    const newColumns = { ...columns };
-    const sourceCol = [...newColumns[sourceStatus]];
-    const [moved] = sourceCol.splice(source.index, 1);
+    if (!validation.isValid || !validation.movedProspect) return;
 
-    if (sourceStatus === destStatus) {
-      sourceCol.splice(destination.index, 0, moved!);
-      newColumns[sourceStatus] = sourceCol;
-    } else {
-      const destCol = [...newColumns[destStatus]];
-      const updatedProspect = { ...moved!, status: destStatus };
-      destCol.splice(destination.index, 0, updatedProspect);
-      newColumns[sourceStatus] = sourceCol;
-      newColumns[destStatus] = destCol;
-    }
+    const { sourceKey, destKey, movedProspect } = validation;
 
-    setColumns(newColumns);
+    const prospectToInsert = sourceKey === destKey
+      ? movedProspect
+      : computeUpdatedProspect({
+          prospect: movedProspect,
+          destKey,
+          isDev,
+        });
+
+    const nextColumns = computeNextColumnsState({
+      columns,
+      sourceKey,
+      destKey,
+      sourceIndex: source.index,
+      destIndex: destination.index,
+      movedProspect: prospectToInsert,
+    });
+
+    setColumns(nextColumns);
     setConflictMsg("");
 
-    // Persist status change
-    if (sourceStatus !== destStatus) {
-      const res = await fetch(`/api/prospects/${draggableId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: destStatus }),
+    if (sourceKey !== destKey) {
+      const body = computePersistenceBody({
+        isDev,
+        destKey,
       });
 
-      if (res.status === 409 || res.status === 423) {
-        // Conflit : prospect déjà pris ou fiche verrouillée par un autre closer — revert
-        const data = await res.json();
-        setConflictMsg(data.error);
-        fetchProspects(); // Reload to get true state
-        setTimeout(() => setConflictMsg(""), 5000);
-      } else if (!res.ok) {
-        fetchProspects(); // Revert on any error
-      }
+      await syncProspectChanges({
+        prospectId: draggableId,
+        body,
+        onConflict: (error: string) => {
+          setConflictMsg(error);
+          fetchProspects();
+          setTimeout(() => setConflictMsg(""), 5000);
+        },
+        onError: () => {
+          fetchProspects();
+        },
+      });
     }
   }
 
@@ -135,7 +377,6 @@ export function PipelineBoard() {
 
   return (
     <DragDropContext onDragEnd={handleDragEnd}>
-      {/* Conflict alert */}
       {conflictMsg && (
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -143,33 +384,31 @@ export function PipelineBoard() {
         </div>
       )}
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {PROSPECT_STATUSES.map((status) => (
+        {columnDefs.map((column) => (
           <div
-            key={status.value}
-            className={cn("flex-shrink-0 w-[260px] sm:w-[300px] rounded-xl", columnStyles[status.value].bg)}
+            key={column.value}
+            className={cn("flex-shrink-0 w-[260px] sm:w-[300px] rounded-xl", column.styles.bg)}
           >
-            {/* Column header */}
-            <div className={cn("px-4 py-3 flex items-center justify-between rounded-t-xl", columnStyles[status.value].header)}>
-              <h3 className={cn("text-sm font-semibold", columnStyles[status.value].headerText)}>
-                {status.label}
+            <div className={cn("px-4 py-3 flex items-center justify-between rounded-t-xl", column.styles.header)}>
+              <h3 className={cn("text-sm font-semibold", column.styles.headerText)}>
+                {column.label}
               </h3>
-              <span className={cn("text-xs font-medium rounded-full px-2 py-0.5", columnStyles[status.value].badge)}>
-                {columns[status.value].length}
+              <span className={cn("text-xs font-medium rounded-full px-2 py-0.5", column.styles.badge)}>
+                {(columns[column.value] ?? []).length}
               </span>
             </div>
 
-            {/* Droppable area */}
-            <Droppable droppableId={status.value}>
+            <Droppable droppableId={column.value}>
               {(provided, snapshot) => (
                 <div
                   ref={provided.innerRef}
                   {...provided.droppableProps}
                   className={cn(
                     "px-2 pb-2 min-h-[200px] space-y-2 transition-colors rounded-b-xl",
-                    snapshot.isDraggingOver && columnStyles[status.value].dragOver
+                    snapshot.isDraggingOver && column.styles.dragOver
                   )}
                 >
-                  {columns[status.value].map((prospect, index) => (
+                  {(columns[column.value] ?? []).map((prospect, index) => (
                     <Draggable
                       key={prospect._id}
                       draggableId={prospect._id}
@@ -181,13 +420,12 @@ export function PipelineBoard() {
                           {...provided.draggableProps}
                           {...provided.dragHandleProps}
                           onClick={(e) => {
-                            // dnd marque le clic comme defaultPrevented après un drag
                             if (e.defaultPrevented) return;
                             router.push(`/prospects/${prospect._id}`);
                           }}
                           className={cn(
                             "bg-background rounded-lg border border-border p-3 shadow-sm border-t-2 cursor-pointer",
-                            columnStyles[status.value].card,
+                            column.styles.card,
                             snapshot.isDragging && "shadow-lg rotate-2"
                           )}
                         >

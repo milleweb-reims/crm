@@ -12,9 +12,9 @@ import * as XLSX from "xlsx";
 type Step = "upload" | "preview" | "importing" | "done";
 
 interface ImportResult {
-  imported: number;
-  duplicates: number;
-  errors: number;
+  readonly imported: number;
+  readonly duplicates: number;
+  readonly errors: number;
 }
 
 export default function ImportPage() {
@@ -101,7 +101,6 @@ export default function ImportPage() {
         description="Importez vos prospects depuis un fichier Excel"
       />
 
-      {/* Upload step */}
       {step === "upload" && (
         <Card className="max-w-2xl mx-auto">
           <div
@@ -137,7 +136,6 @@ export default function ImportPage() {
         </Card>
       )}
 
-      {/* Preview step */}
       {step === "preview" && (
         <div className="space-y-6">
           <Card>
@@ -151,7 +149,6 @@ export default function ImportPage() {
               </div>
             </div>
 
-            {/* Preview table */}
             <div className="overflow-x-auto border border-border rounded-lg">
               <table className="w-full text-xs">
                 <thead>
@@ -201,7 +198,6 @@ export default function ImportPage() {
         </div>
       )}
 
-      {/* Importing step */}
       {step === "importing" && (
         <Card className="max-w-md mx-auto text-center py-12">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
@@ -212,7 +208,6 @@ export default function ImportPage() {
         </Card>
       )}
 
-      {/* Done step */}
       {step === "done" && result && (
         <Card className="max-w-md mx-auto text-center py-12">
           <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />

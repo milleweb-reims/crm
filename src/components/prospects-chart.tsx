@@ -11,12 +11,12 @@ import {
 } from "recharts";
 
 interface MonthlyData {
-  _id: { year: number; month: number };
-  count: number;
+  readonly _id: { readonly year: number; readonly month: number };
+  readonly count: number;
 }
 
 interface ProspectsChartProps {
-  data: MonthlyData[];
+  readonly data: readonly MonthlyData[];
 }
 
 const monthNames = [

@@ -51,12 +51,12 @@ export async function POST(
     );
   }
 
-  const sent = await sendEmail(
+  const sent = await sendEmail({
     to,
     subject,
-    `<p>${escapeHtml(message).replace(/\n/g, "<br/>")}</p>
-     <p>—<br/>${escapeHtml(session.user.name || "L'équipe Milleweb")}<br/>Milleweb</p>`
-  );
+    html: `<p>${escapeHtml(message).replace(/\n/g, "<br/>")}</p>
+     <p>—<br/>${escapeHtml(session.user.name || "L'équipe Milleweb")}<br/>Milleweb</p>`,
+  });
 
   if (!sent) {
     return NextResponse.json(

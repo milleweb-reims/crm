@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Utilitaires animate-in/animate-out attendus par les composants shadcn. */
+@import "tw-animate-css";
 
 @theme inline {
   --color-background: #ffffff;
@@ -11,6 +13,10 @@
   --color-primary-light: #eef2ff;
   --color-destructive: #ef4444;
   --color-destructive-foreground: #ffffff;
+  /* Tokens attendus par les composants shadcn (focus ring, états hover). */
+  --color-ring: #6366f1;
+  --color-accent: #f9fafb;
+  --color-accent-foreground: #101828;
   --font-sans: var(--font-inter);
 }
 

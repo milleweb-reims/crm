@@ -3,6 +3,34 @@ import { connectDB } from "@/lib/db";
 import { Reminder } from "@/lib/models/reminder.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 
+/**
+ * Builds a MongoDB filter for reminder queries based on role and query parameters.
+ * Non-admins see only their own reminders; admins see all.
+ */
+function buildReminderFilter(params: {
+  readonly userId: string;
+  readonly userRole: string;
+  readonly prospectId?: string | null;
+  readonly isTodayView: boolean;
+}): Record<string, unknown> {
+  const dateRange =
+    params.isTodayView ?
+      (() => {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        return { dueDate: { $gte: start, $lte: end }, isCompleted: false };
+      })()
+    : {};
+
+  return {
+    ...(params.userRole !== "admin" && { userId: params.userId }),
+    ...(params.prospectId && { prospectId: params.prospectId }),
+    ...dateRange,
+  };
+}
+
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
@@ -10,26 +38,13 @@ export async function GET(req: NextRequest) {
   await connectDB();
 
   const { searchParams } = req.nextUrl;
-  const prospectId = searchParams.get("prospectId");
-  const today = searchParams.get("today");
 
-  const filter: Record<string, unknown> = {};
-
-  // Non-admins only see their own reminders
-  if (session.user.role !== "admin") {
-    filter.userId = session.user.id;
-  }
-
-  if (prospectId) filter.prospectId = prospectId;
-
-  if (today === "true") {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    filter.dueDate = { $gte: start, $lte: end };
-    filter.isCompleted = false;
-  }
+  const filter = buildReminderFilter({
+    userId: session.user.id,
+    userRole: session.user.role,
+    prospectId: searchParams.get("prospectId"),
+    isTodayView: searchParams.get("today") === "true",
+  });
 
   const reminders = await Reminder.find(filter)
     .sort({ dueDate: 1 })

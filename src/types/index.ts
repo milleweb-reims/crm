@@ -8,102 +8,111 @@ export type ProspectStatus =
   | "paye"
   | "pas_interesse";
 
-export const PROSPECT_STATUSES: {
-  value: ProspectStatus;
-  label: string;
-  color: string;
-}[] = [
+export const PROSPECT_STATUSES = [
   { value: "prospect", label: "Prospect", color: "gray" },
   { value: "en_appel", label: "En appel", color: "amber" },
   { value: "rdv", label: "RDV Démo", color: "blue" },
   { value: "lien_envoye", label: "Lien envoyé", color: "violet" },
   { value: "paye", label: "Payé", color: "green" },
   { value: "pas_interesse", label: "Pas intéressé", color: "red" },
-];
+] as const;
+
+/**
+ * Pipeline dev : suivi de la construction du site, indépendant du statut de
+ * vente ci-dessus — un dev ne touche jamais à `status`.
+ */
+export type DeliveryStage = "a_faire" | "en_cours" | "termine";
+
+export const DELIVERY_STAGES = [
+  { value: "a_faire", label: "Site à faire" },
+  { value: "en_cours", label: "En cours" },
+  { value: "termine", label: "Terminé" },
+] as const;
 
 export interface IUser {
-  _id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  avatar?: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  readonly _id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly role: UserRole;
+  readonly avatar?: string;
+  readonly isActive: boolean;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
 }
 
 export interface IAddress {
-  full: string;
-  line1: string;
-  line2: string;
-  city: string;
-  postalCode: string;
-  state: string;
-  region: string;
-  department: string;
-  country: string;
-  countryCode: string;
+  readonly full: string;
+  readonly line1: string;
+  readonly line2: string;
+  readonly city: string;
+  readonly postalCode: string;
+  readonly state: string;
+  readonly region: string;
+  readonly department: string;
+  readonly country: string;
+  readonly countryCode: string;
 }
 
 export interface IEmails {
-  individual: string;
-  individualFirstName: string;
-  individualLastName: string;
-  contact: string;
-  sales: string;
-  marketing: string;
-  finance: string;
-  admin: string;
-  all: string;
+  readonly individual: string;
+  readonly individualFirstName: string;
+  readonly individualLastName: string;
+  readonly contact: string;
+  readonly sales: string;
+  readonly marketing: string;
+  readonly finance: string;
+  readonly admin: string;
+  readonly all: string;
 }
 
 export interface IProspect {
-  _id: string;
-  name: string;
-  phone: string;
-  phoneInternational: string;
-  phoneType: string;
-  email: string;
-  website: string;
-  websiteRoot: string;
-  address: IAddress;
-  location: {
-    type: "Point";
-    coordinates: [number, number];
+  readonly _id: string;
+  readonly name: string;
+  readonly phone: string;
+  readonly phoneInternational: string;
+  readonly phoneType: string;
+  readonly email: string;
+  readonly website: string;
+  readonly websiteRoot: string;
+  readonly address: IAddress;
+  readonly location: {
+    readonly type: "Point";
+    readonly coordinates: readonly [number, number];
   };
-  reviews: { rating: number; count: string };
-  isClosed: boolean;
-  openingHours: Record<string, string>;
-  socialLinks: { facebook: string; linkedin: string; twitter: string };
-  contactPages: string[];
-  emails: IEmails;
-  adPixels: string;
-  status: ProspectStatus;
-  assignedTo:
-    | { _id: string; name: string; email?: string; role?: UserRole }
+  readonly reviews: { readonly rating: number; readonly count: string };
+  readonly isClosed: boolean;
+  readonly openingHours: Readonly<Record<string, string>>;
+  readonly socialLinks: { readonly facebook: string; readonly linkedin: string; readonly twitter: string };
+  readonly contactPages: ReadonlyArray<string>;
+  readonly emails: IEmails;
+  readonly adPixels: string;
+  readonly status: ProspectStatus;
+  readonly assignedTo:
+    | { readonly _id: string; readonly name: string; readonly email?: string; readonly role?: UserRole }
     | string
     | null;
-  lockedBy: { _id: string; name: string } | string | null;
-  lockedAt: Date | null;
-  quoteAmount: number | null;
-  devUrl: string | null;
-  rdvDate: Date | null;
-  paidAt: Date | null;
-  paidAmount: number | null;
-  gcPaymentId: string | null;
-  qontoInvoiceId: string | null;
-  qontoInvoiceNumber: string | null;
-  qontoInvoiceUrl: string | null;
-  gcBillingRequestId: string | null;
-  paymentLink: string | null;
-  paymentLinkCreatedAt: Date | null;
-  signedDate: Date | null;
-  deliveredDate: Date | null;
-  googleMapsLink: string;
-  tags: string[];
-  importBatch: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  readonly lockedBy: { readonly _id: string; readonly name: string } | string | null;
+  readonly lockedAt: Date | null;
+  readonly quoteAmount: number | null;
+  readonly devUrl: string | null;
+  readonly rdvDate: Date | null;
+  readonly paidAt: Date | null;
+  readonly paidAmount: number | null;
+  readonly gcPaymentId: string | null;
+  readonly qontoInvoiceId: string | null;
+  readonly qontoInvoiceNumber: string | null;
+  readonly qontoInvoiceUrl: string | null;
+  readonly gcBillingRequestId: string | null;
+  readonly paymentLink: string | null;
+  readonly paymentLinkCreatedAt: Date | null;
+  readonly signedDate: Date | null;
+  readonly deliveredDate: Date | null;
+  readonly deliveryStage: DeliveryStage | null;
+  readonly googleMapsLink: string;
+  readonly tags: ReadonlyArray<string>;
+  readonly importBatch: string | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
 }
 
 export type ActivityType =
@@ -116,22 +125,22 @@ export type ActivityType =
   | "payment";
 
 export interface IActivity {
-  _id: string;
-  prospectId: string;
-  userId: string;
-  type: ActivityType;
-  content: string;
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
+  readonly _id: string;
+  readonly prospectId: string;
+  readonly userId: string;
+  readonly type: ActivityType;
+  readonly content: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly createdAt: Date;
 }
 
 export interface IReminder {
-  _id: string;
-  prospectId: string;
-  userId: string;
-  dueDate: Date;
-  title: string;
-  description: string;
-  isCompleted: boolean;
-  createdAt: Date;
+  readonly _id: string;
+  readonly prospectId: string;
+  readonly userId: string;
+  readonly dueDate: Date;
+  readonly title: string;
+  readonly description: string;
+  readonly isCompleted: boolean;
+  readonly createdAt: Date;
 }

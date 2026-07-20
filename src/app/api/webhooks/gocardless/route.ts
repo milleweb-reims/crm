@@ -7,25 +7,32 @@ import { emitCrmEvent } from "@/lib/events";
 import { sendAdminEmail } from "@/lib/mailer";
 import { generateInvoice } from "@/lib/invoicing";
 
-// Webhook GoCardless : quand un paiement est effectué, on marque le prospect
-// comme payé, on trace l'activité et on notifie l'admin pour l'achat du domaine.
-//
-// Deux familles d'événements traitées :
-// - billing_requests / fulfilled : le client a terminé le flow de paiement
-//   (Instant Bank Pay) — l'événement principal de notre parcours.
-// - payments / confirmed : confirmation bancaire (mandats, redélivrances).
-//
-// Env requises : GOCARDLESS_WEBHOOK_SECRET, GOCARDLESS_ACCESS_TOKEN
-// Optionnelle : GOCARDLESS_ENVIRONMENT ("sandbox" pour les tests, live par défaut)
+type ProspectDoc = InstanceType<typeof Prospect> | null;
+
+/**
+ * GoCardless webhook handler for payment events.
+ *
+ * Processes two payment event families:
+ * - `billing_requests/fulfilled`: User completes Instant Bank Pay flow (primary event)
+ * - `payments/confirmed`: Bank confirmation for mandates and redeliveries
+ *
+ * When payment is confirmed, marks prospect as paid, logs activity, generates invoice,
+ * and notifies admin to purchase the client's domain name.
+ *
+ * Requires environment variables:
+ * - GOCARDLESS_WEBHOOK_SECRET: Webhook signature validation
+ * - GOCARDLESS_ACCESS_TOKEN: API access
+ * - GOCARDLESS_ENVIRONMENT: "sandbox" for tests, "live" (default) for production
+ */
 
 interface GcEvent {
-  id: string;
-  resource_type: string;
-  action: string;
-  links?: {
-    payment?: string;
-    billing_request?: string;
-    payment_request_payment?: string;
+  readonly id: string;
+  readonly resource_type: string;
+  readonly action: string;
+  readonly links?: {
+    readonly payment?: string;
+    readonly billing_request?: string;
+    readonly payment_request_payment?: string;
   };
 }
 
@@ -52,24 +59,22 @@ async function gcGet(path: string): Promise<Record<string, unknown> | null> {
 }
 
 interface PaymentDetails {
-  paymentId: string;
-  amount: number | null;
-  prospectId: string | null;
-  billingRequestId: string | null;
-  customerEmail: string | null;
-  customerName: string | null;
+  readonly paymentId: string;
+  readonly amount: number | null;
+  readonly prospectId: string | null;
+  readonly billingRequestId: string | null;
+  readonly customerEmail: string | null;
+  readonly customerName: string | null;
 }
 
+/**
+ * Resolve payment details from GoCardless API.
+ *
+ * Fetches payment, mandate, and customer information via API calls.
+ * Prospect matching via metadata: CRM links generate prospect_id on payment_request;
+ * GoCardless copies this to the payment for direct matching.
+ */
 async function resolvePayment(paymentId: string): Promise<PaymentDetails> {
-  const details: PaymentDetails = {
-    paymentId,
-    amount: null,
-    prospectId: null,
-    billingRequestId: null,
-    customerEmail: null,
-    customerName: null,
-  };
-
   const paymentRes = await gcGet(`/payments/${paymentId}`);
   const payment = paymentRes?.payments as
     | {
@@ -78,42 +83,82 @@ async function resolvePayment(paymentId: string): Promise<PaymentDetails> {
         links?: { mandate?: string; billing_request?: string };
       }
     | undefined;
-  if (!payment) return details;
 
-  if (typeof payment.amount === "number") details.amount = payment.amount / 100;
-
-  // Les liens générés par le CRM posent prospect_id en metadata sur le
-  // payment_request ; GoCardless la recopie sur le paiement → matching direct.
-  details.prospectId = payment.metadata?.prospect_id || null;
-  details.billingRequestId = payment.links?.billing_request || null;
+  if (!payment) {
+    return {
+      paymentId,
+      amount: null,
+      prospectId: null,
+      billingRequestId: null,
+      customerEmail: null,
+      customerName: null,
+    };
+  }
 
   const mandateId = payment.links?.mandate;
-  if (!mandateId) return details;
+  if (!mandateId) {
+    return {
+      paymentId,
+      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
+      prospectId: payment.metadata?.prospect_id || null,
+      billingRequestId: payment.links?.billing_request || null,
+      customerEmail: null,
+      customerName: null,
+    };
+  }
 
   const mandateRes = await gcGet(`/mandates/${mandateId}`);
   const mandate = mandateRes?.mandates as { links?: { customer?: string } } | undefined;
   const customerId = mandate?.links?.customer;
-  if (!customerId) return details;
+  if (!customerId) {
+    return {
+      paymentId,
+      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
+      prospectId: payment.metadata?.prospect_id || null,
+      billingRequestId: payment.links?.billing_request || null,
+      customerEmail: null,
+      customerName: null,
+    };
+  }
 
   const customerRes = await gcGet(`/customers/${customerId}`);
   const customer = customerRes?.customers as
     | { email?: string; company_name?: string; given_name?: string; family_name?: string }
     | undefined;
-  if (!customer) return details;
 
-  details.customerEmail = customer.email || null;
-  details.customerName =
-    customer.company_name ||
-    [customer.given_name, customer.family_name].filter(Boolean).join(" ") ||
-    null;
+  if (!customer) {
+    return {
+      paymentId,
+      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
+      prospectId: payment.metadata?.prospect_id || null,
+      billingRequestId: payment.links?.billing_request || null,
+      customerEmail: null,
+      customerName: null,
+    };
+  }
 
-  return details;
+  return {
+    paymentId,
+    amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
+    prospectId: payment.metadata?.prospect_id || null,
+    billingRequestId: payment.links?.billing_request || null,
+    customerEmail: customer.email || null,
+    customerName:
+      customer.company_name ||
+      [customer.given_name, customer.family_name].filter(Boolean).join(" ") ||
+      null,
+  };
 }
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Find prospect by payment metadata, billing request ID, email, or name.
+ * Attempts matching in priority order: ID → billing request → email → name.
+ * Returns null if no prospect found in database.
+ */
 async function findProspect(details: PaymentDetails) {
   if (details.prospectId) {
     const byId = await Prospect.findById(details.prospectId).catch(() => null);
@@ -149,59 +194,101 @@ async function findProspect(details: PaymentDetails) {
   return null;
 }
 
-async function markPaid(details: PaymentDetails) {
-  const prospect = await findProspect(details);
+/**
+ * Check if prospect has already been marked as paid for this payment.
+ * Returns true if payment is already processed (idempotence guard against
+ * duplicate webhook deliveries and multi-event payments).
+ */
+function isAlreadyPaid(prospect: ProspectDoc, paymentId: string): boolean {
+  if (!prospect) return false;
+  return prospect.gcPaymentId === paymentId || !!prospect.paidAt;
+}
 
-  if (prospect) {
-    // Idempotence : GoCardless envoie plusieurs événements pour un même
-    // paiement (fulfilled puis confirmed) et peut redéliver un webhook.
-    if (prospect.gcPaymentId === details.paymentId || prospect.paidAt) {
-      if (!prospect.gcPaymentId) {
-        prospect.gcPaymentId = details.paymentId;
-        await prospect.save();
-      }
-      return;
-    }
-
-    prospect.paidAt = new Date();
-    prospect.paidAmount = details.amount ?? prospect.quoteAmount ?? null;
-    prospect.gcPaymentId = details.paymentId;
-    prospect.status = "paye";
+/**
+ * Record idempotence marker if payment link exists but prospect not yet marked paid.
+ * Handles edge case where we recognize the payment but haven't completed the workflow.
+ */
+async function recordIdempotenceMarker(
+  prospect: Exclude<ProspectDoc, null>,
+  paymentId: string
+): Promise<void> {
+  if (!prospect.gcPaymentId) {
+    prospect.gcPaymentId = paymentId;
     await prospect.save();
-
-    // Facture Qonto en tâche de fond : la réponse au webhook n'attend pas
-    generateInvoice(prospect, details.customerEmail).catch((error) =>
-      console.error("Échec génération facture Qonto", {
-        prospectId: prospect._id.toString(),
-        error,
-      })
-    );
-
-    const amountLabel = prospect.paidAmount
-      ? ` (${prospect.paidAmount.toLocaleString("fr-FR")} €)`
-      : "";
-    await Activity.create({
-      prospectId: prospect._id,
-      userId: null,
-      type: "payment",
-      content: `💰 Paiement reçu via GoCardless${amountLabel}`,
-      metadata: {
-        paymentId: details.paymentId,
-        amount: prospect.paidAmount,
-        email: details.customerEmail,
-      },
-    });
-
-    emitCrmEvent({
-      type: "prospect:updated",
-      prospectId: prospect._id.toString(),
-      userId: "system",
-      timestamp: Date.now(),
-    });
-  } else {
-    console.error("Webhook GoCardless : aucun prospect correspondant", details);
   }
+}
 
+/**
+ * Update prospect with payment date, amount, payment ID, and status.
+ */
+async function updatePaidFields(
+  prospect: Exclude<ProspectDoc, null>,
+  details: PaymentDetails
+): Promise<void> {
+  prospect.paidAt = new Date();
+  prospect.paidAmount = details.amount ?? prospect.quoteAmount ?? null;
+  prospect.gcPaymentId = details.paymentId;
+  prospect.status = "paye";
+  await prospect.save();
+}
+
+/**
+ * Schedule background invoice generation (fire-and-forget, does not block webhook response).
+ */
+function scheduleInvoiceGeneration(
+  prospect: Exclude<ProspectDoc, null>,
+  customerEmail: string | null
+): void {
+  generateInvoice(prospect, customerEmail).catch((error) =>
+    console.error("Échec génération facture Qonto", {
+      prospectId: prospect._id.toString(),
+      error,
+    })
+  );
+}
+
+/**
+ * Record payment activity in prospect timeline.
+ */
+async function recordPaymentActivity(
+  prospect: Exclude<ProspectDoc, null>,
+  details: PaymentDetails
+): Promise<void> {
+  const amountLabel = prospect.paidAmount
+    ? ` (${prospect.paidAmount.toLocaleString("fr-FR")} €)`
+    : "";
+  await Activity.create({
+    prospectId: prospect._id,
+    userId: null,
+    type: "payment",
+    content: `💰 Paiement reçu via GoCardless${amountLabel}`,
+    metadata: {
+      paymentId: details.paymentId,
+      amount: prospect.paidAmount,
+      email: details.customerEmail,
+    },
+  });
+}
+
+/**
+ * Emit payment event for real-time subscribers and integrations.
+ */
+async function emitPaymentEvent(prospectId: string): Promise<void> {
+  emitCrmEvent({
+    type: "prospect:updated",
+    prospectId,
+    userId: "system",
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Notify admin of payment with prospect details and call-to-action for domain purchase.
+ */
+async function notifyAdminOfPayment(
+  prospect: ProspectDoc,
+  details: PaymentDetails
+): Promise<void> {
   const prospectName = prospect?.name || details.customerName || "Client inconnu";
   const amount = details.amount ?? prospect?.paidAmount ?? null;
   await sendAdminEmail(
@@ -214,6 +301,68 @@ async function markPaid(details: PaymentDetails) {
      ${prospect ? `<p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id}">Voir la fiche prospect</a></p>` : "<p>⚠️ Aucun prospect correspondant trouvé dans le CRM.</p>"}
      <p><strong>Action requise :</strong> acheter le nom de domaine du client.</p>`
   );
+}
+
+/**
+ * Mark prospect as paid via payment details.
+ * Orchestrates idempotence check, field updates, invoice generation, activity logging,
+ * event emission, and admin notification in sequence.
+ */
+async function markPaid(details: PaymentDetails): Promise<void> {
+  const prospect = await findProspect(details);
+
+  if (prospect) {
+    if (isAlreadyPaid(prospect, details.paymentId)) {
+      await recordIdempotenceMarker(prospect, details.paymentId);
+      return;
+    }
+
+    await updatePaidFields(prospect, details);
+    scheduleInvoiceGeneration(prospect, details.customerEmail);
+    await recordPaymentActivity(prospect, details);
+    await emitPaymentEvent(prospect._id.toString());
+  } else {
+    console.error("Webhook GoCardless : aucun prospect correspondant", details);
+  }
+
+  await notifyAdminOfPayment(prospect, details);
+}
+
+/**
+ * Handle billing_requests/fulfilled event.
+ * Emitted when user completes Instant Bank Pay flow (primary payment event).
+ */
+async function handleBillingRequestFulfilled(event: GcEvent): Promise<void> {
+  const paymentId = event.links?.payment_request_payment;
+  const billingRequestId = event.links?.billing_request || null;
+
+  if (paymentId) {
+    const details = await resolvePayment(paymentId);
+    await markPaid({
+      ...details,
+      billingRequestId: details.billingRequestId || billingRequestId,
+    });
+  } else if (billingRequestId) {
+    // Fallback: match by billing request ID if payment ID not in event
+    await markPaid({
+      paymentId: billingRequestId,
+      amount: null,
+      prospectId: null,
+      billingRequestId,
+      customerEmail: null,
+      customerName: null,
+    });
+  }
+}
+
+/**
+ * Handle payments/confirmed event.
+ * Emitted for bank confirmation of mandates and redelivery payments.
+ */
+async function handlePaymentConfirmed(event: GcEvent): Promise<void> {
+  const paymentId = event.links?.payment;
+  if (!paymentId) return;
+  await markPaid(await resolvePayment(paymentId));
 }
 
 export async function POST(req: NextRequest) {
@@ -238,34 +387,13 @@ export async function POST(req: NextRequest) {
   await connectDB();
 
   for (const event of events ?? []) {
-    // Flow de paiement terminé par le client (Instant Bank Pay)
     if (event.resource_type === "billing_requests" && event.action === "fulfilled") {
-      const paymentId = event.links?.payment_request_payment;
-      const billingRequestId = event.links?.billing_request || null;
-
-      if (paymentId) {
-        const details = await resolvePayment(paymentId);
-        details.billingRequestId = details.billingRequestId || billingRequestId;
-        await markPaid(details);
-      } else if (billingRequestId) {
-        // Pas de paiement lié dans l'événement : matching par billing request
-        await markPaid({
-          paymentId: billingRequestId,
-          amount: null,
-          prospectId: null,
-          billingRequestId,
-          customerEmail: null,
-          customerName: null,
-        });
-      }
+      await handleBillingRequestFulfilled(event);
       continue;
     }
 
-    // Confirmation bancaire du paiement (mandats / redélivrances)
     if (event.resource_type === "payments" && event.action === "confirmed") {
-      const paymentId = event.links?.payment;
-      if (!paymentId) continue;
-      await markPaid(await resolvePayment(paymentId));
+      await handlePaymentConfirmed(event);
     }
   }
 
