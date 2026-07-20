@@ -7,6 +7,7 @@ import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 import { isLockActive } from "@/lib/lock";
 import { sendEmail } from "@/lib/mailer";
+import { normalizeCity } from "@/lib/city";
 import type { UserRole } from "@/types";
 
 interface RdvProspect {
@@ -489,6 +490,31 @@ export async function PUT(
   const statusResult = await applyStatusChangeEffects({ updates, existing, session, prospectId: id });
   if (statusResult.errorResponse) return statusResult.errorResponse;
   updates = statusResult.updates;
+
+  // Recalculer address.cityKey si address.city a changé.
+  // Garantit que le rattachement territorial reste cohérent après modification.
+  const hasAddressUpdate = updates.address && typeof updates.address === "object";
+  if (hasAddressUpdate) {
+    const newAddressData = updates.address as Record<string, unknown>;
+    const newCity = newAddressData.city;
+    const oldCity = (existing.address as Record<string, unknown> | undefined)?.city;
+
+    // Redériver la clé seulement si la ville a changé vers une valeur valide.
+    // N'écrase pas une clé existante si la ville reste inchangée ou manquante.
+    if (
+      newCity !== oldCity &&
+      typeof newCity === "string" &&
+      newCity.trim() !== ""
+    ) {
+      updates = {
+        ...updates,
+        address: {
+          ...(updates.address as Record<string, unknown>),
+          cityKey: normalizeCity(newCity),
+        },
+      };
+    }
+  }
 
   const prospect = await Prospect.findByIdAndUpdate(id, updates, {
     new: true,
