@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, X } from "lucide-react";
+import { MapPin, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { StatusGuideLink } from "@/components/status-guide";
 import { PROSPECT_STATUSES, type ProspectStatus } from "@/types";
@@ -11,9 +11,11 @@ interface ProspectFiltersProps {
   onFilterChange: (filters: {
     search: string;
     status: ProspectStatus | "";
+    city: string;
   }) => void;
   initialSearch?: string;
   initialStatus?: ProspectStatus | "";
+  initialCity?: string;
   hideStatus?: boolean;
 }
 
@@ -21,22 +23,29 @@ export function ProspectFilters({
   onFilterChange,
   initialSearch = "",
   initialStatus = "",
+  initialCity = "",
   hideStatus = false,
 }: ProspectFiltersProps) {
   const [search, setSearch] = useState(initialSearch);
+  const [city, setCity] = useState(initialCity);
   const [activeStatus, setActiveStatus] = useState<ProspectStatus | "">(
     initialStatus
   );
 
   function handleSearchChange(value: string) {
     setSearch(value);
-    onFilterChange({ search: value, status: activeStatus });
+    onFilterChange({ search: value, status: activeStatus, city });
+  }
+
+  function handleCityChange(value: string) {
+    setCity(value);
+    onFilterChange({ search, status: activeStatus, city: value });
   }
 
   function handleStatusChange(status: ProspectStatus | "") {
     const newStatus = status === activeStatus ? "" : status;
     setActiveStatus(newStatus);
-    onFilterChange({ search, status: newStatus });
+    onFilterChange({ search, status: newStatus, city });
   }
 
   return (
@@ -81,15 +90,28 @@ export function ProspectFilters({
         </div>
       )}
 
-      {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Rechercher un prospect..."
-          value={search}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          className="pl-10"
-        />
+      {/* Recherche et ville */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Rechercher un prospect..."
+            value={search}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="pl-10"
+            data-test="prospect-search"
+          />
+        </div>
+        <div className="relative w-full sm:w-56">
+          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Ville"
+            value={city}
+            onChange={(e) => handleCityChange(e.target.value)}
+            className="pl-10"
+            data-test="prospect-city"
+          />
+        </div>
       </div>
     </div>
   );
