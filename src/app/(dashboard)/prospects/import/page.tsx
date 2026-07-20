@@ -25,6 +25,7 @@ export default function ImportPage() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [parsedProspects, setParsedProspects] = useState<Record<string, unknown>[]>([]);
+  const [closedCount, setClosedCount] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
 
@@ -53,7 +54,8 @@ export default function ImportPage() {
         setMapping(detectedMapping);
 
         const parsed = parseRows(jsonData, detectedMapping);
-        setParsedProspects(parsed);
+        setParsedProspects(parsed.prospects);
+        setClosedCount(parsed.closedCount);
         setStep("preview");
       } catch {
         setError("Erreur lors de la lecture du fichier");
@@ -146,6 +148,11 @@ export default function ImportPage() {
                 <p className="text-sm text-muted-foreground">
                   {rows.length} lignes détectées · {Object.keys(mapping).length}/{headers.length} colonnes mappées · {parsedProspects.length} prospects valides
                 </p>
+                {closedCount > 0 && (
+                  <p className="text-sm text-orange-600">
+                    {closedCount} établissement{closedCount > 1 ? "s" : ""} fermé{closedCount > 1 ? "s" : ""} définitivement exclu{closedCount > 1 ? "s" : ""}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -181,7 +188,7 @@ export default function ImportPage() {
           </Card>
 
           <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={() => { setStep("upload"); setRows([]); }}>
+            <Button variant="outline" onClick={() => { setStep("upload"); setRows([]); setClosedCount(0); setError(""); }}>
               Annuler
             </Button>
             <Button onClick={handleImport} disabled={parsedProspects.length === 0}>
