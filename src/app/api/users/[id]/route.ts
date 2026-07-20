@@ -6,6 +6,7 @@ import { User } from "@/lib/models/user.model";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { Reminder } from "@/lib/models/reminder.model";
+import { Territory } from "@/lib/models/territory.model";
 import { getAuthSession, unauthorized, forbidden } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 import type { UserRole } from "@/types";
@@ -141,6 +142,7 @@ interface DeletionSummary {
   readonly remindersTransferred: number;
   readonly remindersDeleted: number;
   readonly activitiesAnonymised: number;
+  readonly territoriesUpdated: number;
 }
 
 interface ReassignTarget {
@@ -241,11 +243,20 @@ async function detachUserReferences(options: {
   // ensuite comme « Système ».
   const activities = await Activity.updateMany({ userId }, { userId: null });
 
+  // Sans ça, la répartition d'un territoire ciblerait un compte supprimé.
+  // activeCloserIds filtrerait l'identifiant, mais la donnée resterait fausse
+  // et l'interface afficherait un closer fantôme.
+  const territories = await Territory.updateMany(
+    { closers: userId },
+    { $pull: { closers: userId } }
+  );
+
   return {
     locksReleased: locks.modifiedCount,
     prospectsReassigned: reassignTo ? prospects.modifiedCount : 0,
     prospectsUnassigned: reassignTo ? 0 : prospects.modifiedCount,
     activitiesAnonymised: activities.modifiedCount,
+    territoriesUpdated: territories.modifiedCount,
     ...reminders,
   };
 }
