@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface Closer {
   readonly _id: string;
@@ -29,6 +30,14 @@ interface Territory {
   readonly closers: ReadonlyArray<Closer>;
   readonly prospectCount: number;
   readonly unassignedCount: number;
+}
+
+interface City {
+  readonly cityKey: string;
+  readonly city: string;
+  readonly prospectCount: number;
+  readonly unassignedCount: number;
+  readonly hasTerritory: boolean;
 }
 
 interface EditorState {
@@ -49,14 +58,17 @@ export default function TerritoiresPage() {
   const { data: session } = useSession();
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [closers, setClosers] = useState<Closer[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
   const [editor, setEditor] = useState<EditorState>(CLOSED_EDITOR);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [citySearch, setCitySearch] = useState("");
 
   const load = useCallback(async () => {
-    const [territoriesRes, usersRes] = await Promise.all([
+    const [territoriesRes, usersRes, citiesRes] = await Promise.all([
       fetch("/api/territories"),
       fetch("/api/users"),
+      fetch("/api/cities"),
     ]);
 
     if (!territoriesRes.ok) {
@@ -76,6 +88,11 @@ export default function TerritoiresPage() {
       setClosers(
         users.filter((user) => user.role === "closer" && user.isActive)
       );
+    }
+
+    if (citiesRes.ok) {
+      const citiesData = await citiesRes.json();
+      setCities(citiesData.cities ?? []);
     }
   }, []);
 
@@ -120,6 +137,7 @@ export default function TerritoiresPage() {
         : "Territoire enregistré, aucun prospect à attribuer"
     );
     setEditor(CLOSED_EDITOR);
+    setCitySearch("");
     await load();
   }
 
@@ -151,6 +169,15 @@ export default function TerritoiresPage() {
       </>
     );
   }
+
+  // Les villes déjà couvertes sont retirées : le serveur refuserait la création
+  // avec un conflit, autant ne pas les proposer. Le filtre porte sur la graphie
+  // affichée, insensible à la casse.
+  const availableCities = cities.filter(
+    (city) =>
+      !city.hasTerritory &&
+      city.city.toLowerCase().includes(citySearch.trim().toLowerCase())
+  );
 
   return (
     <>
@@ -248,7 +275,12 @@ export default function TerritoiresPage() {
 
       <Dialog
         open={editor.open}
-        onOpenChange={(open) => !open && setEditor(CLOSED_EDITOR)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditor(CLOSED_EDITOR);
+            setCitySearch("");
+          }
+        }}
       >
         <DialogContent>
           <DialogHeader>
@@ -260,17 +292,58 @@ export default function TerritoiresPage() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-1 block">Ville</label>
-              <Input
-                value={editor.city}
-                onChange={(e) =>
-                  setEditor((current) => ({ ...current, city: e.target.value }))
-                }
-                placeholder="Reims"
-                // La ville identifie le territoire : la changer casserait le
-                // rattachement des prospects déjà répartis.
-                disabled={editor.territoryId !== null}
-                data-test="territory-city"
-              />
+
+              {editor.territoryId !== null ? (
+                <p className="text-sm text-muted-foreground">{editor.city}</p>
+              ) : (
+                <>
+                  <Input
+                    value={citySearch}
+                    onChange={(e) => setCitySearch(e.target.value)}
+                    placeholder="Filtrer les villes..."
+                    data-test="territory-city-search"
+                  />
+
+                  <div className="mt-2 max-h-56 overflow-y-auto border border-border rounded-lg divide-y divide-border">
+                    {availableCities.length === 0 ? (
+                      <p className="text-sm text-muted-foreground px-3 py-4 text-center">
+                        Aucune ville disponible. Importez des prospects, ou
+                        toutes les villes ont déjà un territoire.
+                      </p>
+                    ) : (
+                      availableCities.map((city) => (
+                        <button
+                          key={city.cityKey}
+                          type="button"
+                          onClick={() =>
+                            setEditor((current) => ({
+                              ...current,
+                              city: city.city,
+                            }))
+                          }
+                          className={cn(
+                            "w-full text-left px-3 py-2 text-sm transition-colors cursor-pointer",
+                            editor.city === city.city
+                              ? "bg-primary/10 text-primary font-medium"
+                              : "hover:bg-muted"
+                          )}
+                          data-test="territory-city-option"
+                        >
+                          <span className="flex items-center justify-between gap-3">
+                            <span>{city.city}</span>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {city.prospectCount} prospect
+                              {city.prospectCount > 1 ? "s" : ""}
+                              {city.unassignedCount > 0 &&
+                                ` · ${city.unassignedCount} à attribuer`}
+                            </span>
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div>
@@ -303,7 +376,13 @@ export default function TerritoiresPage() {
             </p>
 
             <div className="flex gap-3 justify-end">
-              <Button variant="outline" onClick={() => setEditor(CLOSED_EDITOR)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditor(CLOSED_EDITOR);
+                  setCitySearch("");
+                }}
+              >
                 Annuler
               </Button>
               <Button
