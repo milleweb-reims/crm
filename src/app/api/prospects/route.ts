@@ -5,6 +5,7 @@ import { Activity } from "@/lib/models/activity.model";
 import { Reminder } from "@/lib/models/reminder.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
+import { withCityKey } from "@/lib/city";
 
 /**
  * Builds a MongoDB filter for prospect queries based on search parameters and user role.
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
     delete body.quoteAmount;
   }
 
-  const prospect = await Prospect.create(body);
+  const prospect = await Prospect.create(withCityKey(body));
 
   emitCrmEvent({ type: "prospect:created", prospectId: prospect._id.toString(), userId: session.user.id, timestamp: Date.now() });
 
