@@ -20,6 +20,7 @@ interface PaginationData {
 interface ListFilters {
   readonly search: string;
   readonly status: ProspectStatus | "";
+  readonly city: string;
   readonly assignedTo: string;
   readonly rdvUpcoming: boolean;
   readonly paidMonth: boolean;
@@ -59,6 +60,7 @@ function ProspectsPageContent() {
   const [filters, setFilters] = useState<ListFilters>({
     search: searchParams.get("search") ?? "",
     status: (searchParams.get("status") ?? "") as ProspectStatus | "",
+    city: searchParams.get("city") ?? "",
     assignedTo: searchParams.get("assignedTo") ?? "",
     rdvUpcoming: searchParams.get("rdv") === "upcoming",
     paidMonth: searchParams.get("paid") === "month",
@@ -69,6 +71,7 @@ function ProspectsPageContent() {
     const params = new URLSearchParams({ page: String(page), limit: "20" });
     if (f.search) params.set("search", f.search);
     if (f.status) params.set("status", f.status);
+    if (f.city) params.set("city", f.city);
     if (f.assignedTo) params.set("assignedTo", f.assignedTo);
     if (f.rdvUpcoming) params.set("rdv", "upcoming");
     if (f.paidMonth) params.set("paid", "month");
@@ -96,7 +99,13 @@ function ProspectsPageContent() {
     setFilters((f) => ({ ...f, ...patch }));
   }
 
-  function handleFilterChange(newFilters: Readonly<{ search: string; status: ProspectStatus | "" }>) {
+  function handleFilterChange(
+    newFilters: Readonly<{
+      search: string;
+      status: ProspectStatus | "";
+      city: string;
+    }>
+  ) {
     updateFilters(newFilters);
   }
 
@@ -180,6 +189,7 @@ function ProspectsPageContent() {
         onFilterChange={handleFilterChange}
         initialSearch={filters.search}
         initialStatus={filters.status}
+        initialCity={filters.city}
         hideStatus={session?.user?.role === "dev"}
       />
 
