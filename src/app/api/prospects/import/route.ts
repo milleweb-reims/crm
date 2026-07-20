@@ -4,6 +4,7 @@ import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
+import { withCityKey } from "@/lib/city";
 
 interface ProspectImportData extends Readonly<Record<string, unknown>> {
   readonly name?: unknown;
@@ -26,15 +27,18 @@ async function findDuplicateByNameAndCity(
 
 /**
  * Creates a new prospect record with the import batch identifier.
+ * Applies withCityKey server-side to guarantee address.cityKey is always derived,
+ * ensuring the territory-scoping invariant holds regardless of client version.
  */
 async function createProspectWithBatch(
   data: ProspectImportData,
   batchId: string
 ): Promise<void> {
-  await Prospect.create({
+  const prospectData = withCityKey({
     ...data,
     importBatch: batchId,
   });
+  await Prospect.create(prospectData);
 }
 
 /**
