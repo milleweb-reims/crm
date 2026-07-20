@@ -1,5 +1,7 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
+import { registerModel } from "./register-model";
+
 const userSchema = new Schema(
   {
     name: { type: String, required: true },
@@ -22,4 +24,4 @@ export type UserDocument = InferSchemaType<typeof userSchema> & {
 };
 
 export const User =
-  mongoose.models.User || mongoose.model("User", userSchema);
+  registerModel("User", userSchema);

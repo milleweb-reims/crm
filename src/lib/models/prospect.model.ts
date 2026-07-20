@@ -1,5 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
+import { registerModel } from "./register-model";
+
 const addressSchema = new Schema(
   {
     full: { type: String, default: "" },
@@ -127,4 +129,4 @@ prospectSchema.index({ "address.cityKey": 1 });
 prospectSchema.index({ location: "2dsphere" });
 
 export const Prospect =
-  mongoose.models.Prospect || mongoose.model("Prospect", prospectSchema);
+  registerModel("Prospect", prospectSchema);

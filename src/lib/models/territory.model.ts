@@ -1,5 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
+import { registerModel } from "./register-model";
+
 // Un territoire attribue une ville à un ou plusieurs closers. L'index unique
 // sur cityKey garantit qu'une ville n'a qu'un seul territoire, donc qu'aucune
 // ambiguïté de rattachement n'est possible à l'import.
@@ -16,4 +18,4 @@ const territorySchema = new Schema(
 );
 
 export const Territory =
-  mongoose.models.Territory || mongoose.model("Territory", territorySchema);
+  registerModel("Territory", territorySchema);
