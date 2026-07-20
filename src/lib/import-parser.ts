@@ -119,13 +119,32 @@ function parseCoordinatesField(options: {
 }
 
 /**
- * Returns a new prospect with closed status parsed from French "oui"/"non" string.
+ * Values meaning "permanently closed" across the export formats we receive.
+ * Excel booleans reach us as "true"/"false" once stringified, hence both forms.
+ */
+const CLOSED_VALUES: ReadonlySet<string> = new Set([
+  "oui",
+  "yes",
+  "vrai",
+  "true",
+  "1",
+]);
+
+/**
+ * Determines whether a raw cell value marks the establishment as permanently closed.
+ */
+function isClosedValue(value: string): boolean {
+  return CLOSED_VALUES.has(value.trim().toLowerCase());
+}
+
+/**
+ * Returns a new prospect with closed status parsed from the raw cell value.
  */
 function parseClosedField(
   prospect: Record<string, unknown>,
   value: string
 ): Record<string, unknown> {
-  return { ...prospect, isClosed: value.toLowerCase() === "oui" };
+  return { ...prospect, isClosed: isClosedValue(value) };
 }
 
 /**
@@ -253,16 +272,32 @@ export function parseRow(
 }
 
 /**
- * Transforms multiple rows from Excel data, filtering to prospects with names.
+ * Result of parsing an Excel sheet, with the counts of rows deliberately discarded.
+ */
+export interface ParseRowsResult {
+  readonly prospects: Record<string, unknown>[];
+  readonly closedCount: number;
+  readonly unnamedCount: number;
+}
+
+/**
+ * Transforms multiple rows from Excel data, discarding rows without a name and
+ * establishments flagged as permanently closed ("Est fermé définitivement").
  * @param rows Array of Excel row data
  * @param mapping Column header to prospect field path mapping
- * @returns Array of parsed prospects with valid name fields
+ * @returns Importable prospects plus the number of rows skipped per reason
  */
 export function parseRows(
   rows: ReadonlyArray<Record<string, unknown>>,
   mapping: Record<string, string>
-): Record<string, unknown>[] {
-  return rows
-    .map((row) => parseRow(row, mapping))
-    .filter((prospect): prospect is Record<string, unknown> => Boolean(prospect.name));
+): ParseRowsResult {
+  const parsed = rows.map((row) => parseRow(row, mapping));
+  const named = parsed.filter((prospect) => Boolean(prospect.name));
+  const prospects = named.filter((prospect) => prospect.isClosed !== true);
+
+  return {
+    prospects,
+    closedCount: named.length - prospects.length,
+    unnamedCount: parsed.length - named.length,
+  };
 }
