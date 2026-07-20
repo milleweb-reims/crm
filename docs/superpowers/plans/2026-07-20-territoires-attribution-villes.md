@@ -285,12 +285,27 @@ describe("distribute", () => {
     expect(result).toEqual(["a", "a", "a"]);
   });
 
-  it("sert les moins chargés quand le lot est plus petit que l'équipe", () => {
+  it("sert deux fois le même closer quand il est nettement en retard", () => {
+    // b est à 1, c à 2 : b encaisse le premier, ce qui l'amène à égalité avec c,
+    // puis l'identifiant croissant lui donne aussi le second. c reste à 2 et
+    // deviendra le moins chargé pour le lot suivant.
     const result = distribute({
       loads: [
         { closerId: "a", load: 3 },
         { closerId: "b", load: 1 },
         { closerId: "c", load: 2 },
+      ],
+      count: 2,
+    });
+    expect(result).toEqual(["b", "b"]);
+  });
+
+  it("sert des closers distincts quand le lot est plus petit que l'équipe", () => {
+    const result = distribute({
+      loads: [
+        { closerId: "a", load: 5 },
+        { closerId: "b", load: 0 },
+        { closerId: "c", load: 0 },
       ],
       count: 2,
     });
@@ -394,7 +409,7 @@ export function distribute(options: {
 - [ ] **Step 4 : Lancer les tests pour vérifier qu'ils passent**
 
 Run: `pnpm test src/lib/territory-balance.test.ts`
-Expected: PASS — 9 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 5 : Vérifier types et lint**
 
