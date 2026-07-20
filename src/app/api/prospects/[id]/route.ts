@@ -7,16 +7,382 @@ import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 import { isLockActive } from "@/lib/lock";
 import { sendEmail } from "@/lib/mailer";
+import type { UserRole } from "@/types";
 
 interface RdvProspect {
-  _id: { toString(): string };
-  name: string;
-  rdvDate?: Date | string | null;
-  address?: { city?: string };
-  website?: string;
+  readonly _id: { toString(): string };
+  readonly name: string;
+  readonly rdvDate?: Date | string | null;
+  readonly address?: { readonly city?: string };
+  readonly website?: string;
 }
 
-// Prévient l'admin et les devs qu'un site est à construire avant le RDV
+interface ProspectDoc {
+  readonly _id: { toString(): string };
+  readonly status: string;
+  readonly lockedBy?: { readonly _id: { toString(): string }; readonly name: string } | null;
+  readonly lockedAt?: Date | null;
+  readonly assignedTo?: { readonly _id: { toString(): string }; readonly name?: string } | null;
+  readonly quoteAmount?: number | null;
+  readonly [key: string]: unknown;
+}
+
+interface AuthSession {
+  readonly user: {
+    readonly id: string;
+    readonly role: UserRole;
+  };
+}
+
+/**
+ * Filters update body to only dev-allowed fields (site delivery tracking).
+ * Devs cannot modify sales statuses or other fields.
+ */
+function pickDevAllowedFields(
+  body: Record<string, unknown>
+): Record<string, unknown> {
+  const devAllowedFields = new Set(["devUrl", "deliveryStage", "deliveredDate"]);
+  return Object.fromEntries(
+    Object.entries(body).filter(([key]) => devAllowedFields.has(key))
+  );
+}
+
+/**
+ * Validates dev role restrictions: devs cannot change sales status or other fields.
+ * Returns error response if validation fails, null if valid.
+ */
+function validateDevRoleRestrictions(
+  body: Record<string, unknown>,
+  existing: ProspectDoc
+): NextResponse | null {
+  if (body.status && body.status !== existing.status) {
+    return NextResponse.json(
+      { error: "Un dev ne peut pas modifier le statut d'un prospect" },
+      { status: 403 }
+    );
+  }
+  return null;
+}
+
+/**
+ * Validates prospect lock status. Returns error response if locked by another user,
+ * null if user can proceed. Lock applies to closers/non-admin; devs are exempt.
+ */
+function validateProspectNotLocked(
+  existing: ProspectDoc,
+  session: AuthSession
+): NextResponse | null {
+  if (
+    existing.lockedBy &&
+    existing.lockedBy._id.toString() !== session.user.id &&
+    (isLockActive(existing.lockedAt) || existing.status === "en_appel") &&
+    session.user.role !== "admin" &&
+    session.user.role !== "dev"
+  ) {
+    return NextResponse.json(
+      {
+        error: `Fiche en cours de traitement par ${existing.lockedBy.name || "un autre utilisateur"}`,
+        lockedBy: existing.lockedBy,
+      },
+      { status: 423 }
+    );
+  }
+  return null;
+}
+
+/**
+ * Pure: Determines what updates and activity to record for an assignedTo change.
+ * Takes already-validated data.
+ */
+function computeAssignedToUpdate(options: {
+  readonly body: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly requestedAssigneeId: string | null;
+  readonly assigneeName: string | null;
+}): {
+  readonly updates: Record<string, unknown>;
+  readonly activityToRecord?: {
+    readonly content: string;
+    readonly metadata: Record<string, unknown>;
+  };
+} {
+  const { body, existing, requestedAssigneeId, assigneeName } = options;
+  const current = existing.assignedTo?._id?.toString() ?? null;
+
+  if (requestedAssigneeId === current) {
+    return {
+      updates: Object.fromEntries(
+        Object.entries(body).filter(([key]) => key !== "assignedTo")
+      ),
+    };
+  }
+
+  return {
+    updates: { ...body, assignedTo: requestedAssigneeId },
+    activityToRecord: {
+      content: assigneeName
+        ? `Prospect attribué à ${assigneeName}`
+        : "Attribution retirée",
+      metadata: { assignedTo: requestedAssigneeId },
+    },
+  };
+}
+
+/**
+ * Processes assignedTo field changes. Admin-only for manual assignment changes.
+ * Records activity log when assignment changes. Returns updated body and optional error.
+ */
+async function processAssignedToField(options: {
+  readonly body: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly session: AuthSession;
+  readonly prospectId: string;
+}): Promise<{ readonly updates: Record<string, unknown>; readonly errorResponse?: NextResponse }> {
+  const { body, existing, session, prospectId } = options;
+
+  if (!("assignedTo" in body)) {
+    return { updates: body };
+  }
+
+  if (session.user.role !== "admin") {
+    return {
+      updates: body,
+      errorResponse: NextResponse.json({ error: "Accès refusé" }, { status: 403 }),
+    };
+  }
+
+  const requested = body.assignedTo || null;
+  let assigneeName: string | null = null;
+
+  if (requested) {
+    const assignee = await User.findById(requested).select("name isActive");
+    if (!assignee || !assignee.isActive) {
+      return {
+        updates: body,
+        errorResponse: NextResponse.json(
+          { error: "Utilisateur introuvable ou désactivé" },
+          { status: 400 }
+        ),
+      };
+    }
+    assigneeName = assignee.name;
+  }
+
+  const { updates, activityToRecord } = computeAssignedToUpdate({
+    body,
+    existing,
+    requestedAssigneeId: typeof requested === "string" ? requested : null,
+    assigneeName,
+  });
+
+  if (activityToRecord) {
+    await Activity.create({
+      prospectId,
+      userId: session.user.id,
+      type: "note",
+      ...activityToRecord,
+    });
+  }
+
+  return { updates };
+}
+
+/**
+ * Validates quote amount field changes. Only admins can modify quote amounts.
+ * Removes field from updates if no change or user lacks permission.
+ */
+function processQuoteAmountField(options: {
+  readonly body: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly session: AuthSession;
+}): { readonly updates: Record<string, unknown>; readonly errorResponse?: NextResponse } {
+  const { body, existing, session } = options;
+
+  if (!("quoteAmount" in body)) {
+    return { updates: body };
+  }
+
+  const requested = body.quoteAmount ?? null;
+  const current = existing.quoteAmount ?? null;
+
+  if (requested === current) {
+    return {
+      updates: Object.fromEntries(
+        Object.entries(body).filter(([key]) => key !== "quoteAmount")
+      ),
+    };
+  }
+
+  if (session.user.role !== "admin") {
+    return {
+      updates: body,
+      errorResponse: NextResponse.json(
+        { error: "Seul un admin peut modifier le montant du devis" },
+        { status: 403 }
+      ),
+    };
+  }
+
+  return { updates: body };
+}
+
+/**
+ * Validates status transition rules. Prevents setting "payé" manually
+ * (GoCardless webhook sets it) and blocks status changes on paid prospects
+ * except by admins.
+ */
+function validateStatusTransition(options: {
+  readonly updates: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly session: AuthSession;
+}): NextResponse | null {
+  const { updates, existing, session } = options;
+
+  if (!updates.status || updates.status === existing.status) {
+    return null;
+  }
+
+  if (updates.status === "paye") {
+    return NextResponse.json(
+      { error: "Le statut « Payé » est posé automatiquement à la réception du paiement" },
+      { status: 403 }
+    );
+  }
+
+  if (existing.status === "paye" && session.user.role !== "admin") {
+    return NextResponse.json(
+      { error: "Fiche payée : le statut ne peut plus être modifié" },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Pure: Computes status change effects (auto-assign, lock on en_appel, etc.).
+ * Returns the updated body and any activity to record, or conflict error data.
+ */
+function computeStatusChangeEffects(options: {
+  readonly updates: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly userId: string;
+  readonly userRole: UserRole;
+}): {
+  readonly updates: Record<string, unknown>;
+  readonly activityToRecord?: {
+    readonly content: string;
+    readonly metadata: Record<string, unknown>;
+  };
+  readonly conflictError?: {
+    readonly message: string;
+    readonly assignedName: string;
+  };
+} {
+  const { updates, existing, userId, userRole } = options;
+
+  const isCloserOrAdmin = userRole === "closer" || userRole === "admin";
+  let effectsUpdate = updates;
+
+  if (existing.status === "prospect" && isCloserOrAdmin && !existing.assignedTo) {
+    effectsUpdate = { ...effectsUpdate, assignedTo: userId };
+  }
+
+  const holdsLock =
+    existing.lockedBy && existing.lockedBy._id.toString() === userId;
+  const assignedToUser =
+    existing.assignedTo && typeof existing.assignedTo === "object"
+      ? existing.assignedTo
+      : null;
+
+  if (
+    !holdsLock &&
+    assignedToUser &&
+    assignedToUser._id.toString() !== userId &&
+    userRole !== "admin"
+  ) {
+    const assignedName = assignedToUser.name || "un autre utilisateur";
+    return {
+      updates: effectsUpdate,
+      conflictError: {
+        message: `Ce prospect est déjà pris par ${assignedName}`,
+        assignedName,
+      },
+    };
+  }
+
+  if (updates.status === "en_appel") {
+    effectsUpdate = {
+      ...effectsUpdate,
+      lockedBy: userId,
+      lockedAt: new Date(),
+    };
+  }
+
+  return {
+    updates: effectsUpdate,
+    activityToRecord: {
+      content: `Statut changé de "${existing.status}" à "${updates.status}"`,
+      metadata: { from: existing.status, to: updates.status },
+    },
+  };
+}
+
+/**
+ * Applies status change side effects: auto-assignment to closer, lock on "en_appel",
+ * activity logging, and conflict detection. Returns updated body with status effects.
+ */
+async function applyStatusChangeEffects(options: {
+  readonly updates: Record<string, unknown>;
+  readonly existing: ProspectDoc;
+  readonly session: AuthSession;
+  readonly prospectId: string;
+}): Promise<{ readonly updates: Record<string, unknown>; readonly errorResponse?: NextResponse }> {
+  const { updates, existing, session, prospectId } = options;
+
+  if (!updates.status || updates.status === existing.status) {
+    return { updates };
+  }
+
+  const { updates: effectsUpdate, conflictError, activityToRecord } = computeStatusChangeEffects({
+    updates,
+    existing,
+    userId: session.user.id,
+    userRole: session.user.role,
+  });
+
+  if (conflictError) {
+    return {
+      updates: effectsUpdate,
+      errorResponse: NextResponse.json(
+        {
+          error: conflictError.message,
+          assignedTo: {
+            name: conflictError.assignedName,
+            _id: existing.assignedTo?._id,
+          },
+        },
+        { status: 409 }
+      ),
+    };
+  }
+
+  if (activityToRecord) {
+    await Activity.create({
+      prospectId,
+      userId: session.user.id,
+      type: "status_change",
+      ...activityToRecord,
+    });
+  }
+
+  return { updates: effectsUpdate };
+}
+
+/**
+ * Sends notification when RDV date is set. Alerts admins and devs that
+ * the website must be ready before the demo. Runs asynchronously in background.
+ */
 async function notifySiteToBuild(prospect: RdvProspect, closerName?: string | null) {
   const team = await User.find({
     role: { $in: ["admin", "dev"] },
@@ -37,15 +403,15 @@ async function notifySiteToBuild(prospect: RdvProspect, closerName?: string | nu
       })
     : "date à confirmer";
 
-  await sendEmail(
-    recipients,
-    `🌐 Site à faire — ${prospect.name} (RDV le ${rdvLabel})`,
-    `<h2>Un RDV a été fixé : le site doit être prêt pour la démo</h2>
+  await sendEmail({
+    to: recipients,
+    subject: `🌐 Site à faire — ${prospect.name} (RDV le ${rdvLabel})`,
+    html: `<h2>Un RDV a été fixé : le site doit être prêt pour la démo</h2>
      <p><strong>Prospect :</strong> ${prospect.name}${prospect.address?.city ? ` (${prospect.address.city})` : ""}</p>
      <p><strong>RDV :</strong> ${rdvLabel}</p>
      ${closerName ? `<p><strong>Closer :</strong> ${closerName}</p>` : ""}
-     <p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id.toString()}">Voir la fiche prospect</a> — le « Prompt Claude Design » y est disponible pour générer le site.</p>`
-  );
+     <p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id.toString()}">Voir la fiche prospect</a> — le « Prompt Claude Design » y est disponible pour générer le site.</p>`,
+  });
 }
 
 export async function GET(
@@ -83,7 +449,7 @@ export async function PUT(
   await connectDB();
 
   const { id } = await params;
-  const body = await req.json();
+  let updates = await req.json() as Record<string, unknown>;
 
   const existing = await Prospect.findById(id)
     .populate("assignedTo", "name email role")
@@ -95,139 +461,36 @@ export async function PUT(
     );
   }
 
-  // Fiche verrouillée par un autre utilisateur : pas de modification possible
-  // (le statut "en_appel" verrouille sans expiration)
-  if (
-    existing.lockedBy &&
-    existing.lockedBy._id.toString() !== session.user.id &&
-    (isLockActive(existing.lockedAt) || existing.status === "en_appel") &&
-    session.user.role !== "admin"
-  ) {
-    return NextResponse.json(
-      {
-        error: `Fiche en cours de traitement par ${existing.lockedBy.name || "un autre utilisateur"}`,
-        lockedBy: existing.lockedBy,
-      },
-      { status: 423 }
-    );
+  if (session.user.role === "dev") {
+    const devValidationError = validateDevRoleRestrictions(updates, existing);
+    if (devValidationError) return devValidationError;
+    updates = pickDevAllowedFields(updates);
   }
 
-  // Attribution manuelle (champ envoyé par le client) : admin uniquement.
-  // L'auto-assignation au changement de statut (plus bas) reste ouverte aux closers.
-  if ("assignedTo" in body) {
-    const requested = body.assignedTo || null;
-    const current = existing.assignedTo?._id?.toString() ?? null;
+  const lockError = validateProspectNotLocked(existing, session);
+  if (lockError) return lockError;
 
-    if (requested === current) {
-      delete body.assignedTo;
-    } else {
-      if (session.user.role !== "admin") {
-        return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
-      }
+  const assignedToResult = await processAssignedToField({
+    body: updates,
+    existing,
+    session,
+    prospectId: id,
+  });
+  if (assignedToResult.errorResponse) return assignedToResult.errorResponse;
+  updates = assignedToResult.updates;
 
-      let assigneeName: string | null = null;
-      if (requested) {
-        const assignee = await User.findById(requested).select("name isActive");
-        if (!assignee || !assignee.isActive) {
-          return NextResponse.json(
-            { error: "Utilisateur introuvable ou désactivé" },
-            { status: 400 }
-          );
-        }
-        assigneeName = assignee.name;
-      }
-      body.assignedTo = requested;
+  const quoteAmountResult = processQuoteAmountField({ body: updates, existing, session });
+  if (quoteAmountResult.errorResponse) return quoteAmountResult.errorResponse;
+  updates = quoteAmountResult.updates;
 
-      await Activity.create({
-        prospectId: id,
-        userId: session.user.id,
-        type: "note",
-        content: assigneeName
-          ? `Prospect attribué à ${assigneeName}`
-          : "Attribution retirée",
-        metadata: { assignedTo: requested },
-      });
-    }
-  }
+  const statusError = validateStatusTransition({ updates, existing, session });
+  if (statusError) return statusError;
 
-  // Le montant du devis est fixé par un admin uniquement : ni un closer ni
-  // un dev ne peuvent le définir ou le modifier.
-  if ("quoteAmount" in body && session.user.role !== "admin") {
-    const requested = body.quoteAmount ?? null;
-    const current = existing.quoteAmount ?? null;
-    if (requested !== current) {
-      return NextResponse.json(
-        { error: "Seul un admin peut modifier le montant du devis" },
-        { status: 403 }
-      );
-    }
-    delete body.quoteAmount;
-  }
+  const statusResult = await applyStatusChangeEffects({ updates, existing, session, prospectId: id });
+  if (statusResult.errorResponse) return statusResult.errorResponse;
+  updates = statusResult.updates;
 
-  // Le statut « payé » est géré par le webhook GoCardless : on ne le pose
-  // pas à la main, et une fiche payée ne change plus de statut (sauf admin
-  // pour corriger une erreur).
-  if (body.status && body.status !== existing.status) {
-    if (body.status === "paye") {
-      return NextResponse.json(
-        { error: "Le statut « Payé » est posé automatiquement à la réception du paiement" },
-        { status: 403 }
-      );
-    }
-    if (existing.status === "paye" && session.user.role !== "admin") {
-      return NextResponse.json(
-        { error: "Fiche payée : le statut ne peut plus être modifié" },
-        { status: 403 }
-      );
-    }
-  }
-
-  // Auto-assign on status change (closer takes a prospect)
-  if (body.status && body.status !== existing.status) {
-    const isCloserOrAdmin = session.user.role === "closer" || session.user.role === "admin";
-
-    // If prospect is being moved out of "prospect" status, auto-assign
-    if (existing.status === "prospect" && isCloserOrAdmin && !existing.assignedTo) {
-      body.assignedTo = session.user.id;
-    }
-
-    // Conflict check: if already assigned to another user, reject —
-    // sauf si l'utilisateur détient le verrou (il a « pris » la fiche)
-    const holdsLock =
-      existing.lockedBy &&
-      existing.lockedBy._id.toString() === session.user.id;
-    if (
-      !holdsLock &&
-      existing.assignedTo &&
-      existing.assignedTo._id.toString() !== session.user.id &&
-      session.user.role !== "admin"
-    ) {
-      const assignedName = existing.assignedTo.name || "un autre utilisateur";
-      return NextResponse.json(
-        {
-          error: `Ce prospect est déjà pris par ${assignedName}`,
-          assignedTo: existing.assignedTo,
-        },
-        { status: 409 }
-      );
-    }
-
-    // Passer "en appel" verrouille immédiatement la fiche pour ce closer
-    if (body.status === "en_appel") {
-      body.lockedBy = session.user.id;
-      body.lockedAt = new Date();
-    }
-
-    await Activity.create({
-      prospectId: id,
-      userId: session.user.id,
-      type: "status_change",
-      content: `Statut changé de "${existing.status}" à "${body.status}"`,
-      metadata: { from: existing.status, to: body.status },
-    });
-  }
-
-  const prospect = await Prospect.findByIdAndUpdate(id, body, {
+  const prospect = await Prospect.findByIdAndUpdate(id, updates, {
     new: true,
     runValidators: true,
   })
@@ -235,11 +498,18 @@ export async function PUT(
     .populate("lockedBy", "name")
     .lean();
 
-  emitCrmEvent({ type: "prospect:updated", prospectId: id, userId: session.user.id, timestamp: Date.now() });
+  emitCrmEvent({
+    type: "prospect:updated",
+    prospectId: id,
+    userId: session.user.id,
+    timestamp: Date.now(),
+  });
 
-  // RDV posé = un site à construire avant la démo → prévenir l'admin et les
-  // devs. Envoi en tâche de fond : la réponse ne doit pas attendre le SMTP.
-  if (body.status === "rdv" && existing.status !== "rdv" && prospect) {
+  if (
+    updates.status === "rdv" &&
+    existing.status !== "rdv" &&
+    prospect
+  ) {
     notifySiteToBuild(prospect as unknown as RdvProspect, session.user.name).catch(
       (error) => console.error("Échec notification site à faire", { id, error })
     );
@@ -271,7 +541,6 @@ export async function DELETE(
     );
   }
 
-  // Clean up related data
   await Activity.deleteMany({ prospectId: id });
 
   emitCrmEvent({ type: "prospect:deleted", prospectId: id, userId: session.user.id, timestamp: Date.now() });

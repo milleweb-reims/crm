@@ -11,9 +11,11 @@ import {
 } from "@/lib/gocardless";
 import { ttcFromHt } from "@/lib/vat";
 
-// Génère le lien de paiement GoCardless du prospect (montant = quoteAmount).
-// Idempotent : si un lien existe déjà, il est renvoyé tel quel, sauf si
-// { regenerate: true } est passé (l'ancienne billing request est alors annulée).
+/**
+ * Génère le lien de paiement GoCardless du prospect (montant = quoteAmount).
+ * Idempotent : si un lien existe déjà, il est renvoyé tel quel, sauf si
+ * { regenerate: true } est passé (l'ancienne billing request est alors annulée).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

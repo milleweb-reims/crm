@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOut, useSession } from "next-auth/react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useSidebarCollapsed, setSidebarCollapsed } from "@/hooks/use-sidebar-collapsed";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -28,25 +29,14 @@ const bottomNav = [
   { name: "Paramètres", href: "/settings", icon: Settings },
 ];
 
-const COLLAPSED_KEY = "sidebar-collapsed";
-
 export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(COLLAPSED_KEY);
-    if (saved === "true") setCollapsed(true);
-  }, []);
+  const collapsed = useSidebarCollapsed();
 
   function toggleCollapsed() {
-    const next = !collapsed;
-    setCollapsed(next);
-    localStorage.setItem(COLLAPSED_KEY, String(next));
-    // Dispatch event so layout can react
-    window.dispatchEvent(new CustomEvent("sidebar-toggle", { detail: next }));
+    setSidebarCollapsed(!collapsed);
   }
 
   const isActive = (href: string) => {

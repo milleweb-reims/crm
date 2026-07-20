@@ -1,5 +1,8 @@
-// Mapping from Google Maps scraping Excel headers to Prospect fields
-const COLUMN_MAPPING: Record<string, string> = {
+/**
+ * Maps Google Maps scraping Excel headers to prospect field paths.
+ * Enables flexible column detection and field assignment during data import.
+ */
+const COLUMN_MAPPING = {
   "Nom": "name",
   "Lien": "googleMapsLink",
   "Téléphone": "phone",
@@ -47,37 +50,182 @@ const COLUMN_MAPPING: Record<string, string> = {
   "Tous les liens Twitter": "socialLinks.allTwitter",
   "Tous les liens Linkedin": "socialLinks.allLinkedin",
   "Pixels publicitaires du site": "adPixels",
-};
+} as const;
 
-export function detectMapping(headers: string[]): Record<string, string> {
-  const mapping: Record<string, string> = {};
-  for (const header of headers) {
-    const trimmed = header.trim();
-    if (COLUMN_MAPPING[trimmed]) {
-      mapping[trimmed] = COLUMN_MAPPING[trimmed];
-    }
-  }
-  return mapping;
+/**
+ * Detects which columns in the provided headers correspond to known prospect fields.
+ * @param headers Excel column headers to map
+ * @returns Object mapping recognized header names to prospect field paths
+ */
+export function detectMapping(headers: ReadonlyArray<string>): Record<string, string> {
+  return Object.fromEntries(
+    headers
+      .map((header) => header.trim())
+      .filter((trimmed) => trimmed in COLUMN_MAPPING)
+      .map((trimmed) => [trimmed, COLUMN_MAPPING[trimmed as keyof typeof COLUMN_MAPPING]] as const)
+  );
 }
 
-function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown) {
+/**
+ * Returns a new object with value immutably set at the given dot-notation path.
+ * @param options - Configuration object
+ * @param options.target - Target object to update
+ * @param options.path - Dot-separated field path (e.g. "address.city")
+ * @param options.value - Value to assign
+ * @returns New object with nested value set
+ */
+function withNestedValue(options: {
+  readonly target: Record<string, unknown>;
+  readonly path: string;
+  readonly value: unknown;
+}): Record<string, unknown> {
+  const { target, path, value } = options;
   const parts = path.split(".");
-  let current = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i]!;
-    if (!current[part] || typeof current[part] !== "object") {
-      current[part] = {};
-    }
-    current = current[part] as Record<string, unknown>;
-  }
-  current[parts[parts.length - 1]!] = value;
+
+  if (parts.length === 0) return target;
+  if (parts.length === 1) return { ...target, [parts[0]!]: value };
+
+  const [head, ...tail] = parts;
+  const existing = target[head!];
+  const child = existing && typeof existing === "object" ? (existing as Record<string, unknown>) : {};
+
+  return {
+    ...target,
+    [head!]: withNestedValue({ target: child, path: tail.join("."), value }),
+  };
 }
 
+/**
+ * Returns a new prospect with the geographic coordinate set on its location object.
+ */
+function parseCoordinatesField(options: {
+  readonly prospect: Record<string, unknown>;
+  readonly field: string;
+  readonly value: string;
+}): Record<string, unknown> {
+  const num = parseFloat(options.value);
+  if (isNaN(num)) return options.prospect;
+
+  const location = (options.prospect.location as
+    | { type: string; coordinates: ReadonlyArray<number> }
+    | undefined) ?? { type: "Point", coordinates: [0, 0] };
+
+  const coordinates =
+    options.field === "longitude"
+      ? [num, location.coordinates[1] ?? 0]
+      : [location.coordinates[0] ?? 0, num];
+
+  return { ...options.prospect, location: { ...location, coordinates } };
+}
+
+/**
+ * Returns a new prospect with closed status parsed from French "oui"/"non" string.
+ */
+function parseClosedField(
+  prospect: Record<string, unknown>,
+  value: string
+): Record<string, unknown> {
+  return { ...prospect, isClosed: value.toLowerCase() === "oui" };
+}
+
+/**
+ * Returns a new prospect with opening hours parsed from JSON string, falling back to empty object on parse error.
+ */
+function parseOpeningHoursField(
+  prospect: Record<string, unknown>,
+  value: string
+): Record<string, unknown> {
+  try {
+    return { ...prospect, openingHours: JSON.parse(value) };
+  } catch {
+    return { ...prospect, openingHours: {} };
+  }
+}
+
+/**
+ * Parses and returns prospect with reviews rating set, defaulting to 0 on parse error.
+ */
+function parseReviewsRatingField(prospect: Record<string, unknown>, value: string): Record<string, unknown> {
+  const num = parseFloat(value);
+  return withNestedValue({ target: prospect, path: "reviews.rating", value: isNaN(num) ? 0 : num });
+}
+
+/**
+ * Determines if a field represents a contact page.
+ */
+function isContactPageField(field: string): boolean {
+  return field.startsWith("contactPage");
+}
+
+/**
+ * Determines if a field should be skipped during processing.
+ */
+function shouldSkipField(field: string): boolean {
+  return field === "contactPagesAll";
+}
+
+/**
+ * Processes a single row entry, dispatching to appropriate handler based on field type.
+ * @param options - Configuration object
+ * @param options.prospect - Prospect object to update
+ * @param options.contactPages - Array to collect contact page URLs
+ * @param options.field - Field name from column mapping
+ * @param options.value - Raw value from Excel cell
+ * @returns Updated prospect object
+ */
+function processRowEntry(options: {
+  readonly prospect: Record<string, unknown>;
+  readonly contactPages: string[];
+  readonly field: string;
+  readonly value: unknown;
+}): Record<string, unknown> {
+  const { prospect, contactPages, field, value } = options;
+
+  if (value === undefined || value === null || value === "") return prospect;
+
+  const strValue = String(value).trim();
+
+  if (field === "longitude" || field === "latitude") {
+    return parseCoordinatesField({ prospect, field, value: strValue });
+  }
+
+  if (field === "isClosed") {
+    return parseClosedField(prospect, strValue);
+  }
+
+  if (field === "openingHours") {
+    return parseOpeningHoursField(prospect, strValue);
+  }
+
+  if (field === "reviews.rating") {
+    return parseReviewsRatingField(prospect, strValue);
+  }
+
+  if (isContactPageField(field)) {
+    if (strValue) contactPages.push(strValue);
+    return prospect;
+  }
+
+  if (shouldSkipField(field)) {
+    return prospect;
+  }
+
+  return withNestedValue({ target: prospect, path: field, value: strValue });
+}
+
+/**
+ * Transforms a single row from Excel data using the detected column mapping.
+ * Handles special cases for coordinates, status, opening hours, and contact pages.
+ * Builds nested prospect object with initialized containers for addresses, social links, emails, and reviews.
+ * @param row Excel row data keyed by header name
+ * @param mapping Column header to prospect field path mapping
+ * @returns Prospect object with processed fields and nested structures
+ */
 export function parseRow(
   row: Record<string, unknown>,
   mapping: Record<string, string>
 ): Record<string, unknown> {
-  const prospect: Record<string, unknown> = {
+  let prospect: Record<string, unknown> = {
     address: {},
     socialLinks: {},
     emails: {},
@@ -88,57 +236,14 @@ export function parseRow(
 
   const contactPages: string[] = [];
 
-  for (const [header, field] of Object.entries(mapping)) {
-    const value = row[header];
-    if (value === undefined || value === null || value === "") continue;
-
-    const strValue = String(value).trim();
-
-    // Special handling
-    if (field === "longitude" || field === "latitude") {
-      const num = parseFloat(strValue);
-      if (!isNaN(num)) {
-        if (!prospect.location) {
-          prospect.location = { type: "Point", coordinates: [0, 0] };
-        }
-        const loc = prospect.location as { type: string; coordinates: number[] };
-        if (field === "longitude") loc.coordinates[0] = num;
-        if (field === "latitude") loc.coordinates[1] = num;
-      }
-      continue;
-    }
-
-    if (field === "isClosed") {
-      prospect.isClosed = strValue.toLowerCase() === "oui";
-      continue;
-    }
-
-    if (field === "openingHours") {
-      try {
-        prospect.openingHours = JSON.parse(strValue);
-      } catch {
-        prospect.openingHours = {};
-      }
-      continue;
-    }
-
-    if (field === "reviews.rating") {
-      const num = parseFloat(strValue);
-      setNestedValue(prospect, field, isNaN(num) ? 0 : num);
-      continue;
-    }
-
-    if (field.startsWith("contactPage")) {
-      if (strValue) contactPages.push(strValue);
-      continue;
-    }
-
-    if (field === "contactPagesAll") {
-      continue; // We build from individual contact pages
-    }
-
-    setNestedValue(prospect, field, strValue);
-  }
+  Object.entries(mapping).forEach(([header, field]) => {
+    prospect = processRowEntry({
+      prospect,
+      contactPages,
+      field,
+      value: row[header],
+    });
+  });
 
   if (contactPages.length > 0) {
     prospect.contactPages = contactPages;
@@ -147,9 +252,17 @@ export function parseRow(
   return prospect;
 }
 
+/**
+ * Transforms multiple rows from Excel data, filtering to prospects with names.
+ * @param rows Array of Excel row data
+ * @param mapping Column header to prospect field path mapping
+ * @returns Array of parsed prospects with valid name fields
+ */
 export function parseRows(
-  rows: Record<string, unknown>[],
+  rows: ReadonlyArray<Record<string, unknown>>,
   mapping: Record<string, string>
 ): Record<string, unknown>[] {
-  return rows.map((row) => parseRow(row, mapping)).filter((p) => p.name);
+  return rows
+    .map((row) => parseRow(row, mapping))
+    .filter((prospect): prospect is Record<string, unknown> => Boolean(prospect.name));
 }

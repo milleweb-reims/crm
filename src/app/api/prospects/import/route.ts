@@ -5,6 +5,99 @@ import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 
+interface ProspectImportData extends Readonly<Record<string, unknown>> {
+  readonly name?: unknown;
+  readonly address?: Readonly<{ city?: unknown }>;
+}
+
+/**
+ * Checks if a prospect with the given name and city already exists.
+ */
+async function findDuplicateByNameAndCity(
+  name: string,
+  city: string
+): Promise<boolean> {
+  const existing = await Prospect.findOne({
+    name,
+    "address.city": city || "",
+  });
+  return !!existing;
+}
+
+/**
+ * Creates a new prospect record with the import batch identifier.
+ */
+async function createProspectWithBatch(
+  data: ProspectImportData,
+  batchId: string
+): Promise<void> {
+  await Prospect.create({
+    ...data,
+    importBatch: batchId,
+  });
+}
+
+/**
+ * Processes a batch of prospect records, detecting duplicates and tracking import metrics.
+ * Sequential awaits preserve database query ordering.
+ */
+async function processProspectImportBatch(
+  prospectData: ReadonlyArray<ProspectImportData>,
+  batchId: string
+): Promise<{ readonly imported: number; readonly duplicates: number; readonly errors: number }> {
+  let imported = 0;
+  let duplicates = 0;
+  let errors = 0;
+
+  for (const data of prospectData) {
+    try {
+      const isDuplicate = await findDuplicateByNameAndCity(
+        String(data.name),
+        String(data.address?.city || "")
+      );
+
+      if (isDuplicate) {
+        duplicates++;
+        continue;
+      }
+
+      await createProspectWithBatch(data, batchId);
+      imported++;
+    } catch {
+      errors++;
+    }
+  }
+
+  return { imported, duplicates, errors };
+}
+
+/**
+ * Creates an activity record documenting the import batch.
+ */
+async function createImportActivityRecord(opts: {
+  readonly userId: string;
+  readonly batchId: string;
+  readonly imported: number;
+  readonly duplicates: number;
+  readonly errors: number;
+}): Promise<void> {
+  const firstProspect = await Prospect.findOne({ importBatch: opts.batchId });
+  if (firstProspect) {
+    await Activity.create({
+      prospectId: firstProspect._id,
+      userId: opts.userId,
+      type: "import",
+      content: `Import de ${opts.imported} prospects (lot: ${opts.batchId})`,
+      metadata: {
+        batchId: opts.batchId,
+        imported: opts.imported,
+        duplicates: opts.duplicates,
+        errors: opts.errors,
+      },
+    });
+  }
+}
+
 export async function POST(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
@@ -25,50 +118,19 @@ export async function POST(req: NextRequest) {
   }
 
   const batchId = `import_${Date.now()}`;
-  let imported = 0;
-  let duplicates = 0;
-  let errors = 0;
-
-  for (const data of prospectData) {
-    try {
-      // Check for duplicate by name + city
-      const existing = await Prospect.findOne({
-        name: data.name,
-        "address.city": data.address?.city || "",
-      });
-
-      if (existing) {
-        duplicates++;
-        continue;
-      }
-
-      await Prospect.create({
-        ...data,
-        importBatch: batchId,
-      });
-
-      imported++;
-    } catch {
-      errors++;
-    }
-  }
-
-  // Log import activity
-  if (imported > 0) {
-    // Create a system-level activity for tracking
-    const firstProspect = await Prospect.findOne({ importBatch: batchId });
-    if (firstProspect) {
-      await Activity.create({
-        prospectId: firstProspect._id,
-        userId: session.user.id,
-        type: "import",
-        content: `Import de ${imported} prospects (lot: ${batchId})`,
-        metadata: { batchId, imported, duplicates, errors },
-      });
-    }
-  }
+  const { imported, duplicates, errors } = await processProspectImportBatch(
+    prospectData,
+    batchId
+  );
 
   if (imported > 0) {
+    await createImportActivityRecord({
+      userId: session.user.id,
+      batchId,
+      imported,
+      duplicates,
+      errors,
+    });
     emitCrmEvent({ type: "prospect:imported", userId: session.user.id, timestamp: Date.now() });
   }
 

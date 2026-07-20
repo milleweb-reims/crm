@@ -1,14 +1,14 @@
 import { EventEmitter } from "events";
 
 export type CrmEvent = {
-  type: "prospect:created" | "prospect:updated" | "prospect:deleted" | "prospect:imported";
-  prospectId?: string;
-  userId: string;
-  timestamp: number;
+  readonly type: "prospect:created" | "prospect:updated" | "prospect:deleted" | "prospect:imported";
+  readonly prospectId?: string;
+  readonly userId: string;
+  readonly timestamp: number;
 };
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var crmEventBus: EventEmitter | undefined;
 }
 

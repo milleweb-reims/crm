@@ -1,8 +1,10 @@
-// Client API GoCardless : génération de liens de paiement par prospect.
-// Billing request (Instant Bank Pay avec repli prélèvement) + billing request flow
-// → authorisation_url à partager avec le client.
-// Env requises : GOCARDLESS_ACCESS_TOKEN
-// Optionnelle : GOCARDLESS_ENVIRONMENT ("sandbox" pour les tests, live par défaut)
+/**
+ * Client API GoCardless : génération de liens de paiement par prospect.
+ * Billing request (Instant Bank Pay avec repli prélèvement) + billing request flow
+ * → authorisation_url à partager avec le client.
+ * Env requises : GOCARDLESS_ACCESS_TOKEN
+ * Optionnelle : GOCARDLESS_ENVIRONMENT ("sandbox" pour les tests, live par défaut)
+ */
 
 import { ttcFromHt } from "./vat";
 
@@ -23,7 +25,7 @@ export class GoCardlessError extends Error {
 
 async function gcPost(
   path: string,
-  body: Record<string, unknown>
+  body: Readonly<Record<string, unknown>>
 ): Promise<Record<string, unknown>> {
   const token = process.env.GOCARDLESS_ACCESS_TOKEN;
   if (!token) {
@@ -57,21 +59,23 @@ async function gcPost(
 }
 
 interface ProspectPaymentInput {
-  id: string;
-  name: string;
-  email?: string | null;
-  quoteAmount: number; // en euros HT — le client paie le TTC
+  readonly id: string;
+  readonly name: string;
+  readonly email?: string | null;
+  readonly quoteAmount: number; // en euros HT — le client paie le TTC
 }
 
 export interface ProspectPaymentLink {
-  billingRequestId: string;
-  url: string;
+  readonly billingRequestId: string;
+  readonly url: string;
 }
 
-// Crée une billing request (paiement one-off du montant du devis) puis le flow
-// hébergé associé. metadata.prospect_id est posée sur le payment_request :
-// GoCardless la recopie sur le paiement final, ce qui permet au webhook de
-// retrouver le prospect sans matching email/nom.
+/**
+ * Creates a billing request for the prospect's quote amount, then the associated
+ * hosted payment flow. Sets prospect_id in metadata on the payment_request;
+ * GoCardless copies this to the final payment, enabling webhook to identify
+ * the prospect without email/name matching.
+ */
 export async function createProspectPaymentLink(
   prospect: ProspectPaymentInput
 ): Promise<ProspectPaymentLink> {
@@ -106,8 +110,10 @@ export async function createProspectPaymentLink(
   return { billingRequestId: billingRequest.id, url: flow.authorisation_url };
 }
 
-// Annulation best effort de l'ancienne billing request lors d'une régénération.
-// Une billing request déjà complétée ou annulée renvoie une erreur : on ignore.
+/**
+ * Best-effort cancellation of a previous billing request during regeneration.
+ * Already-completed or already-cancelled requests return errors that are silently ignored.
+ */
 export async function cancelBillingRequest(billingRequestId: string) {
   try {
     await gcPost(`/billing_requests/${billingRequestId}/actions/cancel`, {});

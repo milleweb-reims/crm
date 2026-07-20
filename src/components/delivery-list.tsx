@@ -2,15 +2,15 @@ import Link from "next/link";
 import { ExternalLink, Globe } from "lucide-react";
 
 export interface DeliveryItem {
-  _id: string;
-  name: string;
-  address?: { city?: string };
-  paidAt: string | null;
-  devUrl: string | null;
+  readonly _id: string;
+  readonly name: string;
+  readonly address?: { readonly city?: string };
+  readonly paidAt: string | null;
+  readonly devUrl: string | null;
 }
 
 interface DeliveryListProps {
-  items: DeliveryItem[];
+  readonly items: readonly DeliveryItem[];
 }
 
 function formatDate(value: string | null) {

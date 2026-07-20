@@ -37,11 +37,81 @@ async function countTodayReminders(userId: string, isAdmin: boolean) {
 }
 
 interface LeaderboardEntry {
-  userId: string;
-  name: string;
-  sales: number;
-  ca: number;
-  rdv: number;
+  readonly userId: string;
+  readonly name: string;
+  readonly sales: number;
+  readonly ca: number;
+  readonly rdv: number;
+}
+
+/**
+ * Merges sales and RDV aggregates into a map of leaderboard entries.
+ * Combines data from both sources, with sales taking priority.
+ */
+function mergeAggregates(
+  salesAgg: ReadonlyArray<{ _id: unknown; sales: number; ca: number }>,
+  rdvAgg: ReadonlyArray<{ _id: unknown; rdv: number }>
+): Map<string, LeaderboardEntry> {
+  const rdvMap = new Map(
+    rdvAgg.map(item => [String(item._id), item.rdv])
+  );
+
+  const salesEntries = salesAgg.map(item => [
+    String(item._id),
+    {
+      userId: String(item._id),
+      name: "",
+      sales: item.sales,
+      ca: item.ca,
+      rdv: rdvMap.get(String(item._id)) ?? 0,
+    }
+  ] as const);
+
+  const rdvOnlyEntries = [...rdvMap.entries()]
+    .filter(([id]) => !salesEntries.some(([saleId]) => saleId === id))
+    .map(([id, rdv]) => [
+      id,
+      {
+        userId: id,
+        name: "",
+        sales: 0,
+        ca: 0,
+        rdv,
+      }
+    ] as const);
+
+  return new Map([...salesEntries, ...rdvOnlyEntries]);
+}
+
+/**
+ * Enriches entries with user names from the database.
+ * Returns a new map with updated entries containing name data.
+ */
+function enrichWithUserNames(
+  entries: Map<string, LeaderboardEntry>,
+  users: ReadonlyArray<{ _id: unknown; name: string }>
+): Map<string, LeaderboardEntry> {
+  const userMap = new Map(
+    users.map(u => [String(u._id), u.name])
+  );
+
+  return new Map(
+    [...entries].map(([id, entry]) => [
+      id,
+      { ...entry, name: userMap.get(id) ?? entry.name }
+    ])
+  );
+}
+
+/**
+ * Filters entries by name and sorts by sales (primary) and RDV count (secondary).
+ */
+function filterAndSortLeaderboard(
+  entries: Iterable<LeaderboardEntry>
+): LeaderboardEntry[] {
+  return [...entries]
+    .filter((entry): entry is LeaderboardEntry => Boolean(entry.name))
+    .sort((a, b) => b.sales - a.sales || b.rdv - a.rdv);
 }
 
 async function buildLeaderboard(startOfMonth: Date): Promise<LeaderboardEntry[]> {
@@ -62,42 +132,16 @@ async function buildLeaderboard(startOfMonth: Date): Promise<LeaderboardEntry[]>
     ]),
   ]);
 
-  const byUser = new Map<string, LeaderboardEntry>();
-  for (const item of salesAgg) {
-    byUser.set(String(item._id), {
-      userId: String(item._id),
-      name: "",
-      sales: item.sales,
-      ca: item.ca,
-      rdv: 0,
-    });
-  }
-  for (const item of rdvAgg) {
-    const id = String(item._id);
-    const entry = byUser.get(id) ?? {
-      userId: id,
-      name: "",
-      sales: 0,
-      ca: 0,
-      rdv: 0,
-    };
-    entry.rdv = item.rdv;
-    byUser.set(id, entry);
-  }
+  const entries = mergeAggregates(salesAgg, rdvAgg);
 
-  if (byUser.size === 0) return [];
+  if (entries.size === 0) return [];
 
-  const users = await User.find({ _id: { $in: [...byUser.keys()] } })
+  const users = await User.find({ _id: { $in: [...entries.keys()] } })
     .select("name")
     .lean<{ _id: unknown; name: string }[]>();
-  for (const user of users) {
-    const entry = byUser.get(String(user._id));
-    if (entry) entry.name = user.name;
-  }
 
-  return [...byUser.values()]
-    .filter((entry) => entry.name)
-    .sort((a, b) => b.sales - a.sales || b.rdv - a.rdv);
+  const enriched = enrichWithUserNames(entries, users);
+  return filterAndSortLeaderboard(enriched.values());
 }
 
 async function adminStats(userId: string) {
@@ -149,10 +193,9 @@ async function adminStats(userId: string) {
     countTodayReminders(userId, true),
   ]);
 
-  const byStatus: Record<string, number> = {};
-  for (const item of statusCounts) {
-    byStatus[item._id] = item.count;
-  }
+  const byStatus = Object.fromEntries(
+    statusCounts.map(item => [item._id, item.count])
+  );
 
   return {
     role: "admin" as const,

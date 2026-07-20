@@ -10,24 +10,24 @@
 const QONTO_API_BASE = "https://thirdparty.qonto.com";
 
 interface QontoInvoiceInput {
-  name: string;
-  email?: string | null;
-  city?: string | null;
-  zipCode?: string | null;
-  streetAddress?: string | null;
-  amount: number; // TTC en euros
-  title?: string;
+  readonly name: string;
+  readonly email?: string | null;
+  readonly city?: string | null;
+  readonly zipCode?: string | null;
+  readonly streetAddress?: string | null;
+  readonly amount: number; // TTC en euros
+  readonly title?: string;
 }
 
 export interface QontoInvoice {
-  id: string;
-  number?: string;
-  invoiceUrl?: string;
+  readonly id: string;
+  readonly number?: string;
+  readonly invoiceUrl?: string;
 }
 
 export interface QontoInvoicePdf {
-  filename: string;
-  content: Buffer;
+  readonly filename: string;
+  readonly content: Buffer;
 }
 
 async function qontoFetch(
@@ -68,10 +68,10 @@ function billingAddress(input: QontoInvoiceInput) {
 }
 
 interface QontoClient {
-  id: string;
-  kind?: string;
-  tax_identification_number?: string | null;
-  billing_address?: unknown;
+  readonly id: string;
+  readonly kind?: string;
+  readonly tax_identification_number?: string | null;
+  readonly billing_address?: unknown;
 }
 
 // Qonto refuse de facturer une entreprise sans tin_number (SIREN) : un
@@ -80,31 +80,47 @@ function isInvoiceable(client: QontoClient) {
   return client.kind !== "company" || !!client.tax_identification_number;
 }
 
-// Qonto n'impose pas d'unicité sur les clients : on cherche par email avant
-// d'en créer un — mais on ne réutilise que des clients facturables.
-//
-// Le client est créé en kind "individual" et non "company" : Qonto exige un
-// tin_number (SIREN) pour facturer une entreprise, et le CRM ne connaît pas
-// le SIREN des prospects (422 systématique sinon).
+/**
+ * Qonto n'impose pas d'unicité sur les clients : on cherche par email avant
+ * d'en créer un — mais on ne réutilise que des clients facturables.
+ * Le client est créé en kind "individual" et non "company" : Qonto exige un
+ * tin_number (SIREN) pour facturer une entreprise, et le CRM ne connaît pas
+ * le SIREN des prospects (422 systématique sinon).
+ */
 async function findOrCreateClient(input: QontoInvoiceInput): Promise<string | null> {
-  if (input.email) {
-    const byEmail = await qontoFetch(
-      `/v2/clients?filter[email]=${encodeURIComponent(input.email)}`
-    );
-    const clients = byEmail?.clients as QontoClient[] | undefined;
-    const found = clients?.find(isInvoiceable);
-    if (found) {
-      // Sans adresse de facturation, la création de facture échoue en 422
-      if (!found.billing_address) {
-        await qontoFetch(`/v2/clients/${found.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ billing_address: billingAddress(input) }),
-        });
-      }
-      return found.id;
-    }
-  }
+  const existingClient = await findExistingInvoiceableClient(input);
+  if (existingClient) return existingClient;
 
+  return createNewClient(input);
+}
+
+/**
+ * Cherche un client existant facturisable par email.
+ */
+async function findExistingInvoiceableClient(input: QontoInvoiceInput): Promise<string | null> {
+  if (!input.email) return null;
+
+  const byEmail = await qontoFetch(
+    `/v2/clients?filter[email]=${encodeURIComponent(input.email)}`
+  );
+  const clients = byEmail?.clients as QontoClient[] | undefined;
+  const found = clients?.find(isInvoiceable);
+  if (!found) return null;
+
+  // Sans adresse de facturation, la création de facture échoue en 422
+  if (!found.billing_address) {
+    await qontoFetch(`/v2/clients/${found.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ billing_address: billingAddress(input) }),
+    });
+  }
+  return found.id;
+}
+
+/**
+ * Crée un nouveau client avec les données de l'input.
+ */
+async function createNewClient(input: QontoInvoiceInput): Promise<string | null> {
   const words = input.name.trim().split(/\s+/);
   const created = await qontoFetch("/v2/clients", {
     method: "POST",

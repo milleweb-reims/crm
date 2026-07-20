@@ -1,13 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Plus, Trash2, Shield, ShieldCheck, Code } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Shield,
+  ShieldCheck,
+  Code,
+  UserX,
+  UserCheck,
+} from "lucide-react";
 import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { IUser, UserRole } from "@/types";
 
 const roleConfig: Record<UserRole, { label: string; icon: React.ElementType; color: "violet" | "blue" | "orange" }> = {
@@ -15,6 +31,23 @@ const roleConfig: Record<UserRole, { label: string; icon: React.ElementType; col
   closer: { label: "Closer", icon: Shield, color: "blue" },
   dev: { label: "Dev", icon: Code, color: "orange" },
 };
+
+/** Ce que la suppression d'un compte va emporter, renvoyé par /api/users/[id]/impact. */
+interface DeletionImpact {
+  readonly prospects: number;
+  readonly locks: number;
+  readonly reminders: number;
+  readonly activities: number;
+}
+
+function ImpactRow({ count, label }: Readonly<{ count: number; label: string }>) {
+  return (
+    <li className="flex items-baseline gap-2">
+      <span className="font-semibold text-foreground tabular-nums">{count}</span>
+      <span>{label}</span>
+    </li>
+  );
+}
 
 export default function SettingsPage() {
   const { data: session } = useSession();
@@ -31,20 +64,37 @@ export default function SettingsPage() {
   const [newRole, setNewRole] = useState<UserRole>("closer");
   const [formError, setFormError] = useState("");
 
-  // Delete confirmation
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [deleteName, setDeleteName] = useState("");
+  // Suppression définitive : compte visé, impact chiffré et repreneur éventuel
+  const [deleteTarget, setDeleteTarget] = useState<IUser | null>(null);
+  const [impact, setImpact] = useState<DeletionImpact | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [reassignTo, setReassignTo] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  // Compte dont on attend le récapitulatif : une réponse tardive concernant un
+  // autre compte doit être ignorée.
+  const pendingImpactFor = useRef<string | null>(null);
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPwd, setNewPwd] = useState("");
   const [pwdMsg, setPwdMsg] = useState("");
 
-  const fetchUsers = useCallback(async () => {
+  const loadUsers = useCallback(async () => {
     const res = await fetch("/api/users");
-    if (res.ok) setUsers(await res.json());
-    setLoading(false);
+    return res.ok ? ((await res.json()) as IUser[]) : null;
   }, []);
+
+  const fetchUsers = useCallback(() => {
+    loadUsers()
+      .then((fetched) => {
+        if (fetched) setUsers(fetched);
+      })
+      .catch(() => {
+        // Network unavailable: user can retry via any action
+      })
+      .finally(() => setLoading(false));
+  }, [loadUsers]);
 
   useEffect(() => {
     fetchUsers();
@@ -79,22 +129,71 @@ export default function SettingsPage() {
     fetchUsers();
   }
 
-  async function handleDeactivate(id: string, name: string) {
-    setDeleteConfirm(id);
-    setDeleteName(name);
-  }
-
-  async function confirmDeactivate() {
-    if (!deleteConfirm) return;
-    const res = await fetch(`/api/users/${deleteConfirm}`, { method: "DELETE" });
+  /**
+   * Désactive ou réactive un compte. Un compte désactivé ne peut plus se
+   * connecter et ses sessions ouvertes sont invalidées à la requête suivante.
+   */
+  async function handleToggleActive(user: IUser) {
+    setFormError("");
+    const res = await fetch(`/api/users/${user._id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: !user.isActive }),
+    });
     if (!res.ok) {
-      const data = await res.json();
-      setFormError(data.error || "Erreur lors de la désactivation");
+      const data = await res.json().catch(() => ({}));
+      setFormError(data.error || "Erreur lors de la mise à jour");
     }
-    setDeleteConfirm(null);
-    setDeleteName("");
     fetchUsers();
   }
+
+  function openDeleteModal(user: IUser) {
+    setDeleteTarget(user);
+    setImpact(null);
+    setImpactLoading(true);
+    setReassignTo("");
+    setDeleteError("");
+    pendingImpactFor.current = user._id;
+
+    fetch(`/api/users/${user._id}/impact`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: DeletionImpact | null) => {
+        if (pendingImpactFor.current !== user._id) return;
+        setImpact(data);
+        setImpactLoading(false);
+      })
+      .catch(() => {
+        if (pendingImpactFor.current !== user._id) return;
+        setImpactLoading(false);
+      });
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError("");
+
+    const query = reassignTo ? `?reassignTo=${reassignTo}` : "";
+    const res = await fetch(`/api/users/${deleteTarget._id}${query}`, {
+      method: "DELETE",
+    });
+    setDeleting(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setDeleteError(data.error || "Erreur lors de la suppression");
+      return;
+    }
+
+    setDeleteTarget(null);
+    fetchUsers();
+  }
+
+  // Repreneurs possibles : comptes actifs hors devs (un dev ne traite pas de
+  // prospects) et hors compte supprimé.
+  const transferCandidates = users.filter(
+    (u) => u.isActive && u.role !== "dev" && u._id !== deleteTarget?._id
+  );
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -239,15 +338,37 @@ export default function SettingsPage() {
                               </Badge>
                             </td>
                             <td className="py-3 text-right">
-                              {user._id !== session?.user?.id && user.isActive && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-destructive"
-                                  onClick={() => handleDeactivate(user._id, user.name)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                              {user._id !== session?.user?.id && (
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    title={
+                                      user.isActive
+                                        ? "Désactiver (le compte ne peut plus se connecter)"
+                                        : "Réactiver le compte"
+                                    }
+                                    onClick={() => handleToggleActive(user)}
+                                    data-test={`toggle-active-${user._id}`}
+                                  >
+                                    {user.isActive ? (
+                                      <UserX className="h-4 w-4" />
+                                    ) : (
+                                      <UserCheck className="h-4 w-4 text-green-600" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive"
+                                    title="Supprimer définitivement"
+                                    onClick={() => openDeleteModal(user)}
+                                    data-test={`delete-user-${user._id}`}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -258,22 +379,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* Delete confirmation dialog */}
-              {deleteConfirm && (
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-700 mb-3">
-                    Désactiver le compte de <strong>{deleteName}</strong> ? Cette personne ne pourra plus se connecter.
-                  </p>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="destructive" onClick={confirmDeactivate}>
-                      Confirmer
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setDeleteConfirm(null)}>
-                      Annuler
-                    </Button>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
@@ -307,6 +412,108 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Suppression définitive : récapitulatif chiffré + choix du repreneur */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent
+          className="max-h-[85vh] overflow-y-auto"
+          data-test="delete-user-modal"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Supprimer {deleteTarget?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Le compte sera définitivement supprimé et sa session en cours
+              invalidée. Cette action est irréversible — pour un départ
+              temporaire, préférez la désactivation.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-lg bg-muted/50 p-4">
+            <p className="text-sm font-medium text-foreground mb-2">
+              Ce compte est rattaché à :
+            </p>
+            {impact && (
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                <ImpactRow count={impact.prospects} label="prospects attribués" />
+                <ImpactRow count={impact.locks} label="fiches verrouillées (libérées)" />
+                <ImpactRow count={impact.reminders} label="rappels" />
+                <ImpactRow count={impact.activities} label="entrées d'historique (conservées)" />
+              </ul>
+            )}
+            {!impact && impactLoading && (
+              <p className="text-sm text-muted-foreground">
+                Calcul du récapitulatif…
+              </p>
+            )}
+            {!impact && !impactLoading && (
+              <p className="text-sm text-muted-foreground">
+                Récapitulatif indisponible — la suppression reste possible.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="reassign-to"
+              className="block text-sm font-medium text-foreground mb-1.5"
+            >
+              Transférer prospects et rappels à
+            </label>
+            <select
+              id="reassign-to"
+              value={reassignTo}
+              onChange={(e) => setReassignTo(e.target.value)}
+              disabled={deleting}
+              className="w-full h-10 rounded-lg border border-border bg-background px-3 text-sm"
+              data-test="reassign-to"
+            >
+              <option value="">Personne — libérer les prospects</option>
+              {transferCandidates.map((u) => (
+                <option key={u._id} value={u._id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-2">
+              {reassignTo
+                ? "Les prospects et les rappels changent de propriétaire. L'historique d'activité reste attaché aux fiches."
+                : "Les prospects redeviennent non attribués et repartent dans le pool ; les rappels de ce compte sont supprimés."}
+            </p>
+          </div>
+
+          {deleteError && (
+            <p className="text-sm text-red-600">{deleteError}</p>
+          )}
+
+          <DialogFooter>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Annuler
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleting}
+              data-test="confirm-delete-user"
+            >
+              {deleting ? "Suppression…" : "Supprimer définitivement"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

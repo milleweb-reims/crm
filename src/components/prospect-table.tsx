@@ -28,6 +28,9 @@ export function ProspectTable({
 }: ProspectTableProps) {
   const router = useRouter();
   const { data: session } = useSession();
+  // Un dev n'a pas la notion de statut : la liste est déjà filtrée
+  // (RDV démo ou payé, sans lien dev) côté API.
+  const hideStatus = session?.user?.role === "dev";
 
   return (
     <div className="rounded-xl border border-border bg-background shadow-sm overflow-hidden">
@@ -45,9 +48,11 @@ export function ProspectTable({
               <th className="text-left px-6 py-3 font-medium text-muted-foreground hidden lg:table-cell">
                 Email
               </th>
-              <th className="text-left px-6 py-3 font-medium text-muted-foreground">
-                Statut
-              </th>
+              {!hideStatus && (
+                <th className="text-left px-6 py-3 font-medium text-muted-foreground">
+                  Statut
+                </th>
+              )}
               <th className="text-left px-6 py-3 font-medium text-muted-foreground hidden xl:table-cell">
                 Ville
               </th>
@@ -63,7 +68,7 @@ export function ProspectTable({
             {prospects.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={hideStatus ? 6 : 7}
                   className="px-6 py-12 text-center text-muted-foreground"
                 >
                   Aucun prospect trouvé
@@ -117,9 +122,11 @@ export function ProspectTable({
                 <td className="px-6 py-4 text-muted-foreground hidden lg:table-cell">
                   {prospect.email || "—"}
                 </td>
-                <td className="px-6 py-4">
-                  <StatusBadge status={prospect.status as ProspectStatus} />
-                </td>
+                {!hideStatus && (
+                  <td className="px-6 py-4">
+                    <StatusBadge status={prospect.status as ProspectStatus} />
+                  </td>
+                )}
                 <td className="px-6 py-4 text-muted-foreground hidden xl:table-cell">
                   {prospect.address?.city || "—"}
                 </td>
@@ -203,7 +210,9 @@ export function ProspectTable({
                   </p>
                 )}
               </div>
-              <StatusBadge status={prospect.status as ProspectStatus} />
+              {!hideStatus && (
+                <StatusBadge status={prospect.status as ProspectStatus} />
+              )}
             </div>
             <div className="flex items-center justify-between">
               <div className="text-sm text-muted-foreground space-y-0.5">

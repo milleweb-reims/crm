@@ -6,6 +6,71 @@ import { Reminder } from "@/lib/models/reminder.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 
+/**
+ * Builds a MongoDB filter for prospect queries based on search parameters and user role.
+ * Applies dev role restrictions: limits to rdv/paye prospects, excludes those with devUrl
+ * unless viewing the delivery pipeline. Structures search with $or across name, phone, email, city.
+ *
+ * @param params - Filter parameters from URL search params and session
+ * @returns MongoDB filter object for find/countDocuments operations
+ */
+function buildProspectFilter(params: {
+  readonly status?: string | null;
+  readonly assignedTo?: string | null;
+  readonly search?: string | null;
+  readonly city?: string | null;
+  readonly rdv?: string | null;
+  readonly paid?: string | null;
+  readonly view?: string | null;
+  readonly userRole: string;
+}): Readonly<Record<string, unknown>> {
+  const filter = {
+    ...(params.status && { status: params.status }),
+    ...(params.assignedTo && { assignedTo: params.assignedTo }),
+    ...(params.rdv === "upcoming" && { rdvDate: { $gte: new Date() } }),
+    ...(params.paid === "month" && {
+      paidAt: {
+        $gte: new Date(
+          new Date().getFullYear(),
+          new Date().getMonth(),
+          1
+        ),
+      },
+    }),
+    ...(params.city && { "address.city": { $regex: params.city, $options: "i" } }),
+    ...(params.search && {
+      $or: [
+        { name: { $regex: params.search, $options: "i" } },
+        { phone: { $regex: params.search, $options: "i" } },
+        { email: { $regex: params.search, $options: "i" } },
+        { "address.city": { $regex: params.search, $options: "i" } },
+      ],
+    }),
+  };
+
+  if (params.userRole !== "dev") {
+    return filter;
+  }
+
+  const devFilter = { ...filter, status: { $in: ["rdv", "paye"] } };
+
+  if (params.view === "delivery") {
+    return devFilter;
+  }
+
+  const noDevUrl = { $or: [{ devUrl: null }, { devUrl: "" }] };
+
+  if (filter.$or) {
+    const { $or, ...filterWithoutOr } = devFilter;
+    return {
+      ...filterWithoutOr,
+      $and: [{ $or }, noDevUrl],
+    };
+  }
+
+  return { ...devFilter, ...noDevUrl };
+}
+
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
   if (!session) return unauthorized();
@@ -15,39 +80,17 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "20");
-  const status = searchParams.get("status");
-  const search = searchParams.get("search");
-  const assignedTo = searchParams.get("assignedTo");
-  const city = searchParams.get("city");
 
-  const filter: Record<string, unknown> = {};
-
-  if (status) filter.status = status;
-  if (assignedTo) filter.assignedTo = assignedTo;
-  // rdv=upcoming : prospects dont le RDV est à venir, quel que soit le statut
-  if (searchParams.get("rdv") === "upcoming") {
-    filter.rdvDate = { $gte: new Date() };
-  }
-  // paid=month : prospects payés depuis le début du mois courant
-  if (searchParams.get("paid") === "month") {
-    const now = new Date();
-    filter.paidAt = { $gte: new Date(now.getFullYear(), now.getMonth(), 1) };
-  }
-  if (city) filter["address.city"] = { $regex: city, $options: "i" };
-  if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { phone: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { "address.city": { $regex: search, $options: "i" } },
-    ];
-  }
-
-  // Rôle dev : voit les prospects en RDV — un RDV posé = un site à construire
-  // avant la démo.
-  if (session.user.role === "dev") {
-    filter.status = "rdv";
-  }
+  const filter = buildProspectFilter({
+    status: searchParams.get("status"),
+    assignedTo: searchParams.get("assignedTo"),
+    search: searchParams.get("search"),
+    city: searchParams.get("city"),
+    rdv: searchParams.get("rdv"),
+    paid: searchParams.get("paid"),
+    view: searchParams.get("view"),
+    userRole: session.user.role,
+  });
 
   const [prospects, total] = await Promise.all([
     Prospect.find(filter)

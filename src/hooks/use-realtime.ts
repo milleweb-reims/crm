@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 export function useRealtime(onEvent: () => void) {
-  const callbackRef = useRef(onEvent);
-  callbackRef.current = onEvent;
+  const handleEvent = useEffectEvent(onEvent);
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -13,10 +12,10 @@ export function useRealtime(onEvent: () => void) {
     function connect() {
       es = new EventSource("/api/events");
 
-      es.addEventListener("prospect:created", () => callbackRef.current());
-      es.addEventListener("prospect:updated", () => callbackRef.current());
-      es.addEventListener("prospect:deleted", () => callbackRef.current());
-      es.addEventListener("prospect:imported", () => callbackRef.current());
+      es.addEventListener("prospect:created", () => handleEvent());
+      es.addEventListener("prospect:updated", () => handleEvent());
+      es.addEventListener("prospect:deleted", () => handleEvent());
+      es.addEventListener("prospect:imported", () => handleEvent());
 
       es.onerror = () => {
         es?.close();

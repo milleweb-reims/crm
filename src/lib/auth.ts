@@ -62,11 +62,35 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
         token.id = user.id!;
         token.role = user.role;
+        return token;
       }
+
+      // Le JWT vit 30 jours : sans cette revalidation, un compte supprimé ou
+      // désactivé garderait un accès complet (lecture ET écriture) jusqu'à
+      // l'expiration du jeton. On relit donc le compte à chaque requête.
+      const id = token.id as string | undefined;
+      if (!id) return token;
+
+      try {
+        await connectDB();
+        const current = (await User.findById(id)
+          .select("role isActive")
+          .lean()) as { role: UserRole; isActive: boolean } | null;
+
+        // null invalide la session et efface le cookie côté Auth.js.
+        if (!current || !current.isActive) return null;
+
+        // Un changement de rôle prend effet immédiatement, sans reconnexion.
+        token.role = current.role;
+      } catch {
+        // Base injoignable : on conserve la session plutôt que de déconnecter
+        // tout le monde sur un incident d'infrastructure.
+      }
+
       return token;
     },
     session({ session, token }) {

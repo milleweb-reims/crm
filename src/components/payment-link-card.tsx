@@ -17,15 +17,17 @@ import { ttcFromHt } from "@/lib/vat";
 import type { IProspect } from "@/types";
 
 interface PaymentLinkCardProps {
-  prospect: IProspect;
-  onUpdated: () => void;
+  readonly prospect: IProspect;
+  readonly onUpdated: () => void;
   /** Seul un admin peut définir ou modifier le montant du devis. */
-  canEditQuote: boolean;
-  className?: string;
+  readonly canEditQuote: boolean;
+  readonly className?: string;
 }
 
-// Carte « Devis & paiement » : montant du devis éditable en ligne, puis
-// génération / copie / envoi du lien de paiement GoCardless correspondant.
+/**
+ * Carte « Devis & paiement » : montant du devis éditable en ligne, puis
+ * génération / copie / envoi du lien de paiement GoCardless correspondant.
+ */
 export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }: PaymentLinkCardProps) {
   const [editingQuote, setEditingQuote] = useState(false);
   const [quoteInput, setQuoteInput] = useState("");

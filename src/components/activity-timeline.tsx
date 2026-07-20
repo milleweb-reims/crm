@@ -15,11 +15,11 @@ import { Button } from "@/components/ui/button";
 import type { ActivityType } from "@/types";
 
 interface Activity {
-  _id: string;
-  type: ActivityType;
-  content: string;
-  userId: { name: string } | null;
-  createdAt: string;
+  readonly _id: string;
+  readonly type: ActivityType;
+  readonly content: string;
+  readonly userId: { readonly name: string } | null;
+  readonly createdAt: string;
 }
 
 const typeConfig: Record<
@@ -40,8 +40,8 @@ const typeConfig: Record<
 };
 
 interface ActivityTimelineProps {
-  activities: Activity[];
-  onAddActivity?: (type: ActivityType, content: string) => void;
+  readonly activities: readonly Activity[];
+  readonly onAddActivity?: (type: ActivityType, content: string) => void;
 }
 
 // On affiche peu d'activités au départ ; « Voir plus » active ensuite le

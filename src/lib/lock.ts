@@ -10,14 +10,16 @@ export function isLockActive(lockedAt: Date | string | null | undefined) {
   return Date.now() - new Date(lockedAt).getTime() < LOCK_TTL_MS;
 }
 
-// Verrou tenu par quelqu'un d'autre → renvoie qui le tient, sinon null.
-// Le statut "en_appel" verrouille sans expiration (le closer est au téléphone),
-// sinon le verrou n'est valide que s'il est encore rafraîchi (TTL).
+/**
+ * Verrou tenu par quelqu'un d'autre → renvoie qui le tient, sinon null.
+ * Le statut "en_appel" verrouille sans expiration (le closer est au téléphone),
+ * sinon le verrou n'est valide que s'il est encore rafraîchi (TTL).
+ */
 export function getLockHolder(
   prospect: {
-    status: string;
-    lockedBy: { _id: string; name: string } | string | null;
-    lockedAt: Date | string | null;
+    readonly status: string;
+    readonly lockedBy: { readonly _id: string; readonly name: string } | string | null;
+    readonly lockedAt: Date | string | null;
   },
   currentUserId?: string
 ) {
@@ -30,12 +32,14 @@ export function getLockHolder(
   return lock._id === currentUserId ? null : lock;
 }
 
-// Fiche attribuée à un autre closer → renvoie à qui, sinon null.
-// Contrairement au verrou, l'attribution n'expire pas : seul le closer
-// attribué (ou un admin) peut prendre la fiche.
+/**
+ * Fiche attribuée à un autre closer → renvoie à qui, sinon null.
+ * Contrairement au verrou, l'attribution n'expire pas : seul le closer
+ * attribué (ou un admin) peut prendre la fiche.
+ */
 export function getReservationHolder(
   prospect: {
-    assignedTo: { _id: string; name: string } | string | null;
+    readonly assignedTo: { readonly _id: string; readonly name: string } | string | null;
   },
   currentUserId?: string
 ) {
