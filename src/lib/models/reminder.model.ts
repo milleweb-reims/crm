@@ -1,5 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
+import { registerModel } from "./register-model";
+
 const reminderSchema = new Schema(
   {
     prospectId: {
@@ -23,4 +25,4 @@ const reminderSchema = new Schema(
 );
 
 export const Reminder =
-  mongoose.models.Reminder || mongoose.model("Reminder", reminderSchema);
+  registerModel("Reminder", reminderSchema);

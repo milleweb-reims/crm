@@ -1,5 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
+import { registerModel } from "./register-model";
+
 const activitySchema = new Schema(
   {
     prospectId: {
@@ -25,4 +27,4 @@ const activitySchema = new Schema(
 );
 
 export const Activity =
-  mongoose.models.Activity || mongoose.model("Activity", activitySchema);
+  registerModel("Activity", activitySchema);
