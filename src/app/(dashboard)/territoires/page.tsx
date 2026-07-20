@@ -159,6 +159,31 @@ export default function TerritoiresPage() {
     await load();
   }
 
+  async function handleRelease(territory: Territory) {
+    const confirmed = window.confirm(
+      `Libérer les prospects non entamés de ${territory.city} ? Les dossiers déjà travaillés (appel passé, RDV, lien envoyé, payé) restent à leur closer.`
+    );
+    if (!confirmed) return;
+
+    const res = await fetch(`/api/territories/${territory._id}/release`, {
+      method: "POST",
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error || "Libération impossible");
+      return;
+    }
+
+    setNotice(
+      data.released > 0
+        ? `${data.released} prospect${data.released > 1 ? "s" : ""} libéré${data.released > 1 ? "s" : ""}`
+        : "Aucun prospect à libérer"
+    );
+    await load();
+  }
+
   if (session?.user?.role !== "admin") {
     return (
       <>
@@ -254,6 +279,14 @@ export default function TerritoiresPage() {
                         data-test="territory-edit"
                       >
                         Modifier
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRelease(territory)}
+                        data-test="territory-release"
+                      >
+                        Libérer
                       </Button>
                       <Button
                         variant="ghost"

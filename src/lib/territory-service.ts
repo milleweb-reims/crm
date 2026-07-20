@@ -157,6 +157,52 @@ export async function applyTerritory(
 }
 
 /**
+ * Reprend aux closers les prospects d'une ville qui n'ont pas encore été
+ * travaillés, et les remet à l'état non attribué.
+ *
+ * Seul le statut `"prospect"` est concerné : un dossier ayant avancé (appel
+ * passé, rendez-vous pris, lien envoyé, payé) reste à son closer. C'est ce qui
+ * rend l'action sûre — elle corrige une erreur d'attribution sans jamais
+ * casser un dossier en cours.
+ */
+export async function releaseTerritory(
+  territoryId: string,
+  userId: string
+): Promise<{ released: number }> {
+  const territory = await Territory.findById(territoryId).lean();
+  if (!territory) return { released: 0 };
+
+  const { modifiedCount } = await Prospect.updateMany(
+    {
+      "address.cityKey": territory.cityKey,
+      status: "prospect",
+      assignedTo: { $ne: null },
+    },
+    { $set: { assignedTo: null } }
+  );
+
+  if (modifiedCount > 0) {
+    const firstProspect = await Prospect.findOne({
+      "address.cityKey": territory.cityKey,
+    });
+
+    if (firstProspect) {
+      await Activity.create({
+        prospectId: firstProspect._id,
+        userId,
+        type: "note",
+        content: `Territoire ${territory.city} : ${modifiedCount} prospects libérés`,
+        metadata: { territoryId, city: territory.city, released: modifiedCount },
+      });
+    }
+
+    emitCrmEvent({ type: "prospect:updated", userId, timestamp: Date.now() });
+  }
+
+  return { released: modifiedCount };
+}
+
+/**
  * Pour un ensemble de villes, retourne la file des closers à qui attribuer les
  * prospects, ville par ville.
  *

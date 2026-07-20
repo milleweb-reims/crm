@@ -25,6 +25,7 @@ function buildProspectFilter(params: {
   readonly paid?: string | null;
   readonly view?: string | null;
   readonly userRole: string;
+  readonly userId: string;
 }): Readonly<Record<string, unknown>> {
   const filter = {
     ...(params.status && { status: params.status }),
@@ -49,6 +50,17 @@ function buildProspectFilter(params: {
       ],
     }),
   };
+
+  // Un closer ne voit que ses prospects. L'attribution n'était jusqu'ici qu'une
+  // réservation : elle empêchait un autre closer de prendre la fiche, sans la
+  // masquer. Attribuer une ville n'avait donc aucun effet sur ce que le closer
+  // avait sous les yeux.
+  //
+  // La valeur est écrasée volontairement, et non fusionnée : un closer qui
+  // passerait `?assignedTo=<autre>` dans l'URL ne doit pas contourner la règle.
+  if (params.userRole === "closer") {
+    return { ...filter, assignedTo: params.userId };
+  }
 
   if (params.userRole !== "dev") {
     return filter;
@@ -92,6 +104,7 @@ export async function GET(req: NextRequest) {
     paid: searchParams.get("paid"),
     view: searchParams.get("view"),
     userRole: session.user.role,
+    userId: session.user.id,
   });
 
   const [prospects, total] = await Promise.all([
