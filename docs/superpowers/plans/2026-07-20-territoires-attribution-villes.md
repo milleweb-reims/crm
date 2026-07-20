@@ -619,8 +619,9 @@ git commit -m "feat(territoires): Ajouter address.cityKey et son script de rattr
   - `applyTerritory(territoryId: string, userId: string): Promise<ApplyResult>` où `ApplyResult = { assigned: number; perCloser: Record<string, number> }`
   - `resolveAssignmentsByCity(cityKeys: string[]): Promise<Map<string, string[]>>`
   - `activeCloserIds(closerIds: unknown[]): Promise<string[]>`
+  - `validateClosers(closers: unknown): Promise<string[] | null>`
   
-  Task 5 consomme `applyTerritory`, Task 6 consomme `resolveAssignmentsByCity`.
+  Task 5 consomme `applyTerritory` et `validateClosers`, Task 6 consomme `resolveAssignmentsByCity`.
 
 - [ ] **Step 1 : Créer le modèle**
 
@@ -666,6 +667,30 @@ import { distribute, type CloserLoad } from "./territory-balance";
 export interface ApplyResult {
   readonly assigned: number;
   readonly perCloser: Record<string, number>;
+}
+
+/**
+ * Valide une liste d'identifiants de closer soumise par l'admin.
+ * Retourne les identifiants si TOUS sont valides, null au moindre invalide —
+ * un territoire à moitié appliqué serait pire qu'un refus net.
+ *
+ * Plus strict que l'attribution unitaire de PUT /api/prospects/[id], qui ne
+ * vérifie pas le rôle : un territoire pilote une équipe commerciale, y placer
+ * un dev ou un admin n'aurait pas de sens.
+ */
+export async function validateClosers(
+  closers: unknown
+): Promise<string[] | null> {
+  if (!Array.isArray(closers)) return null;
+  if (closers.length === 0) return [];
+
+  const ids = closers.map(String);
+  const found = await User.find(
+    { _id: { $in: ids }, isActive: true, role: "closer" },
+    { _id: 1 }
+  ).lean();
+
+  return found.length === ids.length ? ids : null;
 }
 
 /**
@@ -861,7 +886,7 @@ git commit -m "feat(territoires): Ajouter le modèle Territory et son service"
 - Create: `src/app/api/territories/[id]/route.ts`
 
 **Interfaces:**
-- Consumes: `applyTerritory` de `@/lib/territory-service` (Task 4) ; `normalizeCity` de `@/lib/city` (Task 1) ; `getAuthSession`, `unauthorized`, `forbidden` de `@/lib/api-auth`.
+- Consumes: `applyTerritory` et `validateClosers` de `@/lib/territory-service` (Task 4) ; `normalizeCity` de `@/lib/city` (Task 1) ; `getAuthSession`, `unauthorized`, `forbidden` de `@/lib/api-auth`.
 - Produces: les quatre endpoints consommés par l'écran de Task 9. Forme de réponse de `POST`/`PUT` : `{ territory, assigned, perCloser }`.
 
 - [ ] **Step 1 : Écrire la route de collection**
@@ -876,29 +901,7 @@ import { normalizeCity } from "@/lib/city";
 import { connectDB } from "@/lib/db";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Territory } from "@/lib/models/territory.model";
-import { User } from "@/lib/models/user.model";
-import { applyTerritory } from "@/lib/territory-service";
-
-/**
- * Valide une liste d'identifiants de closer.
- * Plus strict que l'attribution unitaire de PUT /api/prospects/[id], qui ne
- * vérifie pas le rôle : un territoire pilote une équipe commerciale, y placer
- * un dev ou un admin n'aurait pas de sens.
- */
-async function validateClosers(closers: unknown): Promise<string[] | null> {
-  if (!Array.isArray(closers)) return null;
-  if (closers.length === 0) return [];
-
-  const ids = closers.map(String);
-  const found = await User.find(
-    { _id: { $in: ids }, isActive: true, role: "closer" },
-    { _id: 1 }
-  ).lean();
-
-  if (found.length !== ids.length) return null;
-
-  return ids;
-}
+import { applyTerritory, validateClosers } from "@/lib/territory-service";
 
 export async function GET() {
   const session = await getAuthSession();
@@ -996,24 +999,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { forbidden, getAuthSession, unauthorized } from "@/lib/api-auth";
 import { connectDB } from "@/lib/db";
 import { Territory } from "@/lib/models/territory.model";
-import { User } from "@/lib/models/user.model";
-import { applyTerritory } from "@/lib/territory-service";
-
-/** Voir la note de validateClosers dans ../route.ts : le rôle closer est exigé. */
-async function validateClosers(closers: unknown): Promise<string[] | null> {
-  if (!Array.isArray(closers)) return null;
-  if (closers.length === 0) return [];
-
-  const ids = closers.map(String);
-  const found = await User.find(
-    { _id: { $in: ids }, isActive: true, role: "closer" },
-    { _id: 1 }
-  ).lean();
-
-  if (found.length !== ids.length) return null;
-
-  return ids;
-}
+import { applyTerritory, validateClosers } from "@/lib/territory-service";
 
 export async function PUT(
   req: NextRequest,
