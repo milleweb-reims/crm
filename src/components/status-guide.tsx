@@ -23,7 +23,9 @@ const STATUS_DESCRIPTIONS: Record<ProspectStatus, string> = {
   prospect:
     "Nouveau contact dans la base (import ou ajout manuel). Personne ne l'a encore appelé.",
   en_appel:
-    "Un closer a pris le prospect en main : la prospection téléphonique est en cours (appel passé ou rappel prévu).",
+    "Un closer a la fiche en main et est au téléphone (ou en train de composer). La fiche est verrouillée pour les autres closers.",
+  a_rappeler:
+    "Le prospect n'a pas décroché, ou un message lui a été laissé. Le closer attitré doit le rappeler plus tard — idéalement avec un rappel daté.",
   rdv: "Un rendez-vous est fixé pour présenter la démo du site générée.",
   lien_envoye:
     "Le lien de paiement GoCardless a été envoyé au prospect. En attente du règlement.",
@@ -64,7 +66,11 @@ const CLOSER_STATUS_COPY: Record<ProspectStatus, CloserCopy> = {
   },
   en_appel: {
     goal: "Tu l'as au téléphone. Le but n'est pas de vendre maintenant, mais de lui donner envie de voir le site qu'on a fait pour lui.",
-    next: "Fixe une date et une heure précises, jamais un « rappelez-moi ».",
+    next: "S'il décroche, fixe une date et une heure précises, jamais un « rappelez-moi ». Pas de réponse ou répondeur : passe la fiche en « À rappeler » avec une date de rappel.",
+  },
+  a_rappeler: {
+    goal: "Il n'a pas décroché, ou tu lui as laissé un message. La fiche reste à toi : personne d'autre ne l'appellera. Peu de prospects signent au premier appel — cette pile, c'est ton carburant du lendemain.",
+    next: "Fixe un rappel daté, et au moment de relancer repasse la fiche en « En appel » avant de composer.",
   },
   rdv: {
     goal: "La date est posée, et c'est maintenant que les devs construisent son site. Le jour J il découvre un site déjà fait pour lui : c'est cet effet-là qui fait basculer le oui.",

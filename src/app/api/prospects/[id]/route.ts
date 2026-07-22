@@ -320,6 +320,16 @@ function computeStatusChangeEffects(options: {
     };
   }
 
+  // « À rappeler » gare la fiche : l'appel est terminé, le verrou (posé sans
+  // expiration par « en appel ») n'a plus de raison d'être.
+  if (updates.status === "a_rappeler") {
+    effectsUpdate = {
+      ...effectsUpdate,
+      lockedBy: null,
+      lockedAt: null,
+    };
+  }
+
   return {
     updates: effectsUpdate,
     activityToRecord: {

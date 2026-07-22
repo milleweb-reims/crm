@@ -15,8 +15,18 @@ const BAR_COLORS: Record<string, string> = {
   paye: "bg-green-500",
 };
 
+/**
+ * « À rappeler » n'est pas une étape de progression : c'est la même macro-étape
+ * que « En appel » (prospection téléphonique en boucle), donc ses fiches sont
+ * comptées dans la barre « En appel » pour ne pas fausser les taux de conversion.
+ */
+function stepCount(byStatus: Record<string, number>, status: string): number {
+  const base = byStatus[status] || 0;
+  return status === "en_appel" ? base + (byStatus["a_rappeler"] || 0) : base;
+}
+
 export function ConversionFunnel({ byStatus, total }: ConversionFunnelProps) {
-  const max = Math.max(...FUNNEL_STEPS.map((s) => byStatus[s] || 0), 1);
+  const max = Math.max(...FUNNEL_STEPS.map((s) => stepCount(byStatus, s)), 1);
 
   return (
     <div className="rounded-xl border border-border bg-background p-6 shadow-sm">
@@ -25,9 +35,9 @@ export function ConversionFunnel({ byStatus, total }: ConversionFunnelProps) {
       </h3>
       <div className="space-y-3">
         {FUNNEL_STEPS.map((status, i) => {
-          const count = byStatus[status] || 0;
+          const count = stepCount(byStatus, status);
           const label = PROSPECT_STATUSES.find((s) => s.value === status)?.label;
-          const prev = i > 0 ? byStatus[FUNNEL_STEPS[i - 1]!] || 0 : 0;
+          const prev = i > 0 ? stepCount(byStatus, FUNNEL_STEPS[i - 1]!) : 0;
           const rate = i > 0 && prev > 0 ? Math.round((count / prev) * 100) : null;
 
           return (

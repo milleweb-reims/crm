@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
+import { CallbackReminderDialog } from "@/components/callback-reminder-dialog";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { PromptGenerator } from "@/components/prompt-generator";
 import { DevUrlCard } from "@/components/dev-url-card";
@@ -59,22 +60,34 @@ type ActivityData = Readonly<{
 }>;
 
 /**
- * Sales pipeline progression for closers: prospect → en appel → rdv → lien envoyé.
+ * Sales pipeline progression for closers: prospect → en appel → (à rappeler) → rdv → lien envoyé.
  * Advances step-by-step without skipping, allows free backward movement for corrections.
+ * "À rappeler" is a half-rank detour off "en appel" (no answer / voicemail): reaching it
+ * requires "en appel" first (the lock during dialing keeps its meaning), it never opens
+ * "lien envoyé", and "en appel" → "rdv" still works in one step as if it didn't exist.
  * "Pas intéressé" and "Payé" are terminal states managed separately.
  */
-const STATUS_FLOW = ["prospect", "en_appel", "rdv", "lien_envoye"] as const satisfies ReadonlyArray<ProspectStatus>;
+const STATUS_RANKS: Readonly<Partial<Record<ProspectStatus, number>>> = {
+  prospect: 0,
+  en_appel: 1,
+  a_rappeler: 1.5,
+  rdv: 2,
+  lien_envoye: 3,
+};
 
 /**
  * Prospect status should never transition to or from "payé" (webhook-only),
  * but "pas_interesse" can transition back to "prospect" for re-engagement.
- * Otherwise progression follows STATUS_FLOW linearly (one step forward or any step backward).
+ * Otherwise progression follows STATUS_RANKS (one rank forward or any rank backward).
  */
 function canTransition(from: ProspectStatus, to: ProspectStatus): boolean {
   if (from === "paye" || to === "paye") return false;
   if (to === "pas_interesse") return true;
   if (from === "pas_interesse") return to === "prospect";
-  return STATUS_FLOW.indexOf(to) <= STATUS_FLOW.indexOf(from) + 1;
+  const fromRank = STATUS_RANKS[from];
+  const toRank = STATUS_RANKS[to];
+  if (fromRank === undefined || toRank === undefined) return false;
+  return toRank <= fromRank + 1;
 }
 
 /**
@@ -106,6 +119,7 @@ const deliveryStagePillStyles = {
 const statusPillStyles = {
   prospect: { active: "border-gray-300 bg-gray-100 text-gray-700", dot: "bg-gray-400" },
   en_appel: { active: "border-amber-300 bg-amber-100 text-amber-700", dot: "bg-amber-400" },
+  a_rappeler: { active: "border-orange-300 bg-orange-100 text-orange-700", dot: "bg-orange-400" },
   rdv: { active: "border-blue-300 bg-blue-100 text-blue-700", dot: "bg-blue-400" },
   lien_envoye: { active: "border-violet-300 bg-violet-100 text-violet-700", dot: "bg-violet-400" },
   paye: { active: "border-green-300 bg-green-100 text-green-700", dot: "bg-green-500" },
@@ -120,6 +134,7 @@ export default function ProspectDetailPage() {
   const [activities, setActivities] = useState<ReadonlyArray<ActivityData>>([]);
   const [loading, setLoading] = useState(true);
   const [rdvModalOpen, setRdvModalOpen] = useState(false);
+  const [callbackPromptOpen, setCallbackPromptOpen] = useState(false);
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
   const [promptModalOpen, setPromptModalOpen] = useState(false);
   const [savingRdv, setSavingRdv] = useState(false);
@@ -148,6 +163,7 @@ export default function ProspectDetailPage() {
   const [reservedBy, setReservedBy] = useState<string | null>(null);
   const [closers, setClosers] = useState<ReadonlyArray<IUser>>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [savingStatus, setSavingStatus] = useState(false);
 
   const isAdmin = session?.user?.role === "admin";
   const isDev = session?.user?.role === "dev";
@@ -405,22 +421,34 @@ export default function ProspectDetailPage() {
 
   /**
    * Transition prospect status (except RDV which requires modal date/time input).
+   * Moving to "à rappeler" then offers to schedule the callback reminder — the
+   * status is already changed, the reminder alone is optional.
    */
   async function handleStatusChange(newStatus: string) {
+    if (savingStatus) return;
     if (newStatus === "rdv") {
       setRdvDateTime("");
       setRdvModalOpen(true);
       return;
     }
     setStatusError(null);
-    const res = await fetch(`/api/prospects/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setStatusError(data.error || "Impossible de changer le statut");
+    setSavingStatus(true);
+    try {
+      const res = await fetch(`/api/prospects/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStatusError(data.error || "Impossible de changer le statut");
+      } else if (newStatus === "a_rappeler") {
+        setCallbackPromptOpen(true);
+      }
+    } catch {
+      setStatusError("Erreur réseau — réessaie");
+    } finally {
+      setSavingStatus(false);
     }
     fetchData();
   }
@@ -750,7 +778,7 @@ export default function ProspectDetailPage() {
               prospect.status as ProspectStatus,
               s.value
             );
-            const enabled = canChangeStatus && !isActive && reachable;
+            const enabled = canChangeStatus && !isActive && reachable && !savingStatus;
             return (
               <button
                 key={s.value}
@@ -1216,6 +1244,14 @@ export default function ProspectDetailPage() {
       )}
 
       {/* RDV scheduling modal: date/time input for prospect appointment */}
+      <CallbackReminderDialog
+        open={callbackPromptOpen}
+        onOpenChange={setCallbackPromptOpen}
+        prospectId={prospect._id}
+        prospectName={prospect.name}
+        onCreated={fetchData}
+      />
+
       {rdvModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"

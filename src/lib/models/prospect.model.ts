@@ -76,6 +76,7 @@ const prospectSchema = new Schema(
       enum: [
         "prospect",
         "en_appel",
+        "a_rappeler",
         "rdv",
         "lien_envoye",
         "paye",

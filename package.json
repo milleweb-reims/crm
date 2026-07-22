@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "npx tsx src/lib/seed.ts",
-    "backfill:city-key": "npx tsx src/lib/backfill-city-key.ts"
+    "backfill:city-key": "npx tsx src/lib/backfill-city-key.ts",
+    "migrate:a-rappeler": "npx tsx src/lib/migrate-a-rappeler.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

@@ -3,6 +3,7 @@ export type UserRole = "admin" | "closer" | "dev";
 export type ProspectStatus =
   | "prospect"
   | "en_appel"
+  | "a_rappeler"
   | "rdv"
   | "lien_envoye"
   | "paye"
@@ -11,6 +12,7 @@ export type ProspectStatus =
 export const PROSPECT_STATUSES = [
   { value: "prospect", label: "Prospect", color: "gray" },
   { value: "en_appel", label: "En appel", color: "amber" },
+  { value: "a_rappeler", label: "À rappeler", color: "orange" },
   { value: "rdv", label: "RDV Démo", color: "blue" },
   { value: "lien_envoye", label: "Lien envoyé", color: "violet" },
   { value: "paye", label: "Payé", color: "green" },

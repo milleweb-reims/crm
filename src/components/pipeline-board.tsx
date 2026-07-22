@@ -8,6 +8,7 @@ import {
   type DropResult,
 } from "@hello-pangea/dnd";
 import { Phone, MapPin, User, AlertCircle, Lock } from "lucide-react";
+import { CallbackReminderDialog } from "@/components/callback-reminder-dialog";
 import {
   PROSPECT_STATUSES,
   DELIVERY_STAGES,
@@ -34,6 +35,7 @@ interface ColumnStyle {
 const statusColumnStyles = {
   prospect: { bg: "bg-gray-50", header: "bg-gray-100", headerText: "text-gray-700", card: "border-t-gray-400", badge: "bg-gray-200 text-gray-600", dragOver: "bg-gray-100" },
   en_appel: { bg: "bg-amber-50", header: "bg-amber-100", headerText: "text-amber-700", card: "border-t-amber-400", badge: "bg-amber-200 text-amber-700", dragOver: "bg-amber-100" },
+  a_rappeler: { bg: "bg-orange-50", header: "bg-orange-100", headerText: "text-orange-700", card: "border-t-orange-400", badge: "bg-orange-200 text-orange-700", dragOver: "bg-orange-100" },
   rdv: { bg: "bg-blue-50", header: "bg-blue-100", headerText: "text-blue-700", card: "border-t-blue-400", badge: "bg-blue-200 text-blue-700", dragOver: "bg-blue-100" },
   lien_envoye: { bg: "bg-violet-50", header: "bg-violet-100", headerText: "text-violet-700", card: "border-t-violet-400", badge: "bg-violet-200 text-violet-700", dragOver: "bg-violet-100" },
   paye: { bg: "bg-green-50", header: "bg-green-100", headerText: "text-green-700", card: "border-t-green-400", badge: "bg-green-200 text-green-700", dragOver: "bg-green-100" },
@@ -230,8 +232,9 @@ interface SyncProspectOptions {
  * Persist drag operation to server and handle conflict/error rollback.
  * Implements optimistic update pattern with rollback on 409/423/error.
  * @param options - Prospect ID, request body, and failure callbacks
+ * @returns Whether the server accepted the change
  */
-async function syncProspectChanges(options: SyncProspectOptions): Promise<void> {
+async function syncProspectChanges(options: SyncProspectOptions): Promise<boolean> {
   const { prospectId, body, onConflict, onError } = options;
   const res = await fetch(`/api/prospects/${prospectId}`, {
     method: "PUT",
@@ -245,6 +248,7 @@ async function syncProspectChanges(options: SyncProspectOptions): Promise<void> 
   } else if (!res.ok) {
     onError();
   }
+  return res.ok;
 }
 
 export function PipelineBoard() {
@@ -267,6 +271,8 @@ export function PipelineBoard() {
   const [columns, setColumns] = useState<Record<string, IProspect[]>>({});
   const [loading, setLoading] = useState(true);
   const [conflictMsg, setConflictMsg] = useState("");
+  /** Fiche venant d'être glissée en « À rappeler » : propose le rappel daté. */
+  const [callbackPrompt, setCallbackPrompt] = useState<{ id: string; name: string } | null>(null);
 
   const loadProspects = useCallback(async () => {
     const res = await fetch(
@@ -352,7 +358,7 @@ export function PipelineBoard() {
         destKey,
       });
 
-      await syncProspectChanges({
+      const accepted = await syncProspectChanges({
         prospectId: draggableId,
         body,
         onConflict: (error: string) => {
@@ -364,6 +370,10 @@ export function PipelineBoard() {
           fetchProspects();
         },
       });
+
+      if (accepted && !isDev && destKey === "a_rappeler") {
+        setCallbackPrompt({ id: draggableId, name: movedProspect.name });
+      }
     }
   }
 
@@ -484,6 +494,17 @@ export function PipelineBoard() {
           </div>
         ))}
       </div>
+
+      {callbackPrompt && (
+        <CallbackReminderDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setCallbackPrompt(null);
+          }}
+          prospectId={callbackPrompt.id}
+          prospectName={callbackPrompt.name}
+        />
+      )}
     </DragDropContext>
   );
 }
