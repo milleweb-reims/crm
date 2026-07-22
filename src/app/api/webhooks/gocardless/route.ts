@@ -5,7 +5,14 @@ import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { emitCrmEvent } from "@/lib/events";
 import { sendAdminEmail } from "@/lib/mailer";
-import { generateInvoice } from "@/lib/invoicing";
+import { generateInvoice, generateSubscriptionInvoice } from "@/lib/invoicing";
+import {
+  addOneMonthClamped,
+  createSubscription,
+  parseGcDate,
+  toLocalDateString,
+} from "@/lib/gocardless";
+import { ttcFromHt } from "@/lib/vat";
 
 type ProspectDoc = InstanceType<typeof Prospect> | null;
 
@@ -33,6 +40,7 @@ interface GcEvent {
     readonly payment?: string;
     readonly billing_request?: string;
     readonly payment_request_payment?: string;
+    readonly mandate_request_mandate?: string;
   };
 }
 
@@ -63,6 +71,7 @@ interface PaymentDetails {
   readonly amount: number | null;
   readonly prospectId: string | null;
   readonly billingRequestId: string | null;
+  readonly subscriptionId: string | null;
   readonly customerEmail: string | null;
   readonly customerName: string | null;
 }
@@ -72,7 +81,8 @@ interface PaymentDetails {
  *
  * Fetches payment, mandate, and customer information via API calls.
  * Prospect matching via metadata: CRM links generate prospect_id on payment_request;
- * GoCardless copies this to the payment for direct matching.
+ * GoCardless copies this to the payment for direct matching. subscriptionId is set
+ * when the payment was created by a subscription (monthly debit).
  */
 async function resolvePayment(paymentId: string): Promise<PaymentDetails> {
   const paymentRes = await gcGet(`/payments/${paymentId}`);
@@ -80,7 +90,7 @@ async function resolvePayment(paymentId: string): Promise<PaymentDetails> {
     | {
         amount?: number;
         metadata?: Record<string, string>;
-        links?: { mandate?: string; billing_request?: string };
+        links?: { mandate?: string; billing_request?: string; subscription?: string };
       }
     | undefined;
 
@@ -90,58 +100,39 @@ async function resolvePayment(paymentId: string): Promise<PaymentDetails> {
       amount: null,
       prospectId: null,
       billingRequestId: null,
+      subscriptionId: null,
       customerEmail: null,
       customerName: null,
     };
   }
 
+  const base: PaymentDetails = {
+    paymentId,
+    amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
+    prospectId: payment.metadata?.prospect_id || null,
+    billingRequestId: payment.links?.billing_request || null,
+    subscriptionId: payment.links?.subscription || null,
+    customerEmail: null,
+    customerName: null,
+  };
+
   const mandateId = payment.links?.mandate;
-  if (!mandateId) {
-    return {
-      paymentId,
-      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
-      prospectId: payment.metadata?.prospect_id || null,
-      billingRequestId: payment.links?.billing_request || null,
-      customerEmail: null,
-      customerName: null,
-    };
-  }
+  if (!mandateId) return base;
 
   const mandateRes = await gcGet(`/mandates/${mandateId}`);
   const mandate = mandateRes?.mandates as { links?: { customer?: string } } | undefined;
   const customerId = mandate?.links?.customer;
-  if (!customerId) {
-    return {
-      paymentId,
-      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
-      prospectId: payment.metadata?.prospect_id || null,
-      billingRequestId: payment.links?.billing_request || null,
-      customerEmail: null,
-      customerName: null,
-    };
-  }
+  if (!customerId) return base;
 
   const customerRes = await gcGet(`/customers/${customerId}`);
   const customer = customerRes?.customers as
     | { email?: string; company_name?: string; given_name?: string; family_name?: string }
     | undefined;
 
-  if (!customer) {
-    return {
-      paymentId,
-      amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
-      prospectId: payment.metadata?.prospect_id || null,
-      billingRequestId: payment.links?.billing_request || null,
-      customerEmail: null,
-      customerName: null,
-    };
-  }
+  if (!customer) return base;
 
   return {
-    paymentId,
-    amount: typeof payment.amount === "number" ? payment.amount / 100 : null,
-    prospectId: payment.metadata?.prospect_id || null,
-    billingRequestId: payment.links?.billing_request || null,
+    ...base,
     customerEmail: customer.email || null,
     customerName:
       customer.company_name ||
@@ -329,12 +320,235 @@ async function markPaid(details: PaymentDetails): Promise<void> {
 }
 
 /**
+ * Resolve the mandate ID created by a fulfilled mandate billing request.
+ * Uses the event link when present, falls back to fetching the billing request.
+ */
+async function resolveMandateId(
+  event: GcEvent,
+  billingRequestId: string
+): Promise<string | null> {
+  if (event.links?.mandate_request_mandate) {
+    return event.links.mandate_request_mandate;
+  }
+
+  const brRes = await gcGet(`/billing_requests/${billingRequestId}`);
+  const billingRequest = brRes?.billing_requests as
+    | { mandate_request?: { links?: { mandate?: string } } }
+    | undefined;
+  return billingRequest?.mandate_request?.links?.mandate || null;
+}
+
+/**
+ * Handle a fulfilled mandate billing request: record the signed mandate, then
+ * automatically create the monthly subscription (first debit one month after
+ * signature). Never touches the "payé" status — that belongs to the site
+ * payment flow. Idempotent via gcSubscriptionId.
+ */
+async function handleMandateSigned(
+  prospect: Exclude<ProspectDoc, null>,
+  event: GcEvent,
+  billingRequestId: string
+): Promise<void> {
+  if (prospect.gcSubscriptionId) return;
+
+  const mandateId = await resolveMandateId(event, billingRequestId);
+  if (!mandateId) {
+    console.error("Webhook GoCardless : mandat introuvable pour la billing request", {
+      billingRequestId,
+      prospectId: prospect._id.toString(),
+    });
+    return;
+  }
+
+  const signedAt = prospect.mandateSignedAt ?? new Date();
+  prospect.gcMandateId = mandateId;
+  prospect.mandateSignedAt = signedAt;
+  await prospect.save();
+
+  await Activity.create({
+    prospectId: prospect._id,
+    userId: null,
+    type: "payment",
+    content: "✍️ Mandat de prélèvement signé",
+    metadata: { mandateId, billingRequestId },
+  });
+
+  const amountHt = prospect.subscriptionAmount ?? 29;
+  // Premier prélèvement un mois après la signature, clampé en fin de mois
+  const startDate = addOneMonthClamped(signedAt);
+
+  try {
+    const { subscriptionId, startDate: scheduledStart } = await createSubscription({
+      mandateId,
+      prospectId: prospect._id.toString(),
+      prospectName: prospect.name,
+      monthlyAmountHt: amountHt,
+      startDate: toLocalDateString(startDate),
+    });
+
+    prospect.gcSubscriptionId = subscriptionId;
+    prospect.subscriptionStartDate = scheduledStart ? parseGcDate(scheduledStart) : startDate;
+    await prospect.save();
+
+    const startLabel = prospect.subscriptionStartDate.toLocaleDateString("fr-FR", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    await Activity.create({
+      prospectId: prospect._id,
+      userId: null,
+      type: "payment",
+      content: `🔁 Abonnement créé (${amountHt.toLocaleString("fr-FR")} € HT/mois — ${ttcFromHt(amountHt).toLocaleString("fr-FR")} € TTC) — 1er prélèvement le ${startLabel}`,
+      metadata: { subscriptionId, mandateId, amount: amountHt },
+    });
+
+    await sendAdminEmail(
+      `✍️ Mandat signé — ${prospect.name} : abonnement démarré`,
+      `<h2>Mandat GoCardless signé</h2>
+       <p><strong>Client :</strong> ${prospect.name}</p>
+       <p><strong>Abonnement :</strong> ${amountHt.toLocaleString("fr-FR")} € HT/mois (${ttcFromHt(amountHt).toLocaleString("fr-FR")} € TTC)</p>
+       <p><strong>1er prélèvement :</strong> ${startLabel}</p>
+       <p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id}">Voir la fiche prospect</a></p>`
+    );
+  } catch (error) {
+    console.error("Échec création abonnement après signature du mandat", {
+      prospectId: prospect._id.toString(),
+      mandateId,
+      error,
+    });
+    await sendAdminEmail(
+      `⚠️ Mandat signé — ${prospect.name} : échec de création de l'abonnement`,
+      `<h2>Abonnement à créer manuellement</h2>
+       <p>Le mandat <strong>${mandateId}</strong> est signé mais la création de
+       l'abonnement (${amountHt.toLocaleString("fr-FR")} € HT/mois) a échoué dans GoCardless.</p>
+       <p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id}">Voir la fiche prospect</a></p>`
+    );
+  }
+
+  await emitPaymentEvent(prospect._id.toString());
+}
+
+/** Alerts admin that a subscription debit has no Qonto invoice (manual action). */
+async function notifyAdminSubscriptionInvoiceFailed(
+  prospect: Exclude<ProspectDoc, null>,
+  details: PaymentDetails,
+  amountTtc: number
+): Promise<void> {
+  await sendAdminEmail(
+    `⚠️ Facture abonnement non générée — ${prospect.name}`,
+    `<h2>Prélèvement reçu mais facture Qonto manquante</h2>
+     <p><strong>Client :</strong> ${prospect.name}</p>
+     <p><strong>Montant prélevé :</strong> ${amountTtc.toLocaleString("fr-FR")} € TTC</p>
+     <p><strong>Paiement :</strong> ${details.paymentId}</p>
+     <p><a href="${process.env.NEXTAUTH_URL || ""}/prospects/${prospect._id}">Voir la fiche prospect</a></p>
+     <p><strong>Action requise :</strong> créer la facture dans Qonto, ou renvoyer
+     l'événement webhook depuis le dashboard GoCardless (la facture sera alors retentée).</p>`
+  ).catch((error) => console.error("Échec email admin facture abonnement", { error }));
+}
+
+/**
+ * Record a monthly subscription debit in the prospect timeline and generate
+ * its Qonto invoice. Subscription payments must never mark the prospect "payé"
+ * nor trigger the site invoice — that flow belongs to the one-off site payment.
+ */
+async function recordSubscriptionPayment(details: PaymentDetails): Promise<void> {
+  const prospect = await Prospect.findOne({ gcSubscriptionId: details.subscriptionId });
+  if (!prospect) {
+    console.error("Webhook GoCardless : prélèvement abonnement sans prospect", details);
+    return;
+  }
+
+  const amountLabel = details.amount
+    ? ` (${details.amount.toLocaleString("fr-FR")} €)`
+    : "";
+
+  // Idempotence relivraisons : claim de l'activité de prélèvement par upsert
+  // atomique (un findOne puis create laisserait passer deux livraisons
+  // simultanées). Renvoie null si l'activité vient d'être créée par cet appel.
+  const existingDebit = await Activity.findOneAndUpdate(
+    {
+      prospectId: prospect._id,
+      "metadata.paymentId": details.paymentId,
+      "metadata.subscriptionId": { $exists: true },
+    },
+    {
+      $setOnInsert: {
+        userId: null,
+        type: "payment",
+        content: `💰 Prélèvement abonnement reçu${amountLabel}`,
+        "metadata.subscriptionId": details.subscriptionId,
+        "metadata.amount": details.amount,
+      },
+    },
+    { upsert: true, new: false }
+  );
+
+  // La facture a sa propre garde : un échec Qonto passé ne doit pas être masqué
+  // par l'activité de prélèvement déjà présente — une relivraison du webhook
+  // (ou un renvoi manuel depuis le dashboard GoCardless) retente la facture.
+  const existingInvoice = await Activity.findOne({
+    prospectId: prospect._id,
+    "metadata.paymentId": details.paymentId,
+    "metadata.qontoInvoiceId": { $exists: true },
+  });
+
+  if (!existingInvoice) {
+    const amountTtc =
+      details.amount ?? ttcFromHt(prospect.subscriptionAmount ?? 29);
+
+    if (amountTtc > 0) {
+      // En arrière-plan : ne bloque pas la réponse webhook
+      generateSubscriptionInvoice({
+        prospect,
+        amountTtc,
+        customerEmail: details.customerEmail,
+        paymentId: details.paymentId,
+      })
+        .then((invoice) =>
+          invoice
+            ? undefined
+            : notifyAdminSubscriptionInvoiceFailed(prospect, details, amountTtc)
+        )
+        .catch((error) => {
+          console.error("Échec génération facture abonnement", {
+            prospectId: prospect._id.toString(),
+            paymentId: details.paymentId,
+            error,
+          });
+          return notifyAdminSubscriptionInvoiceFailed(prospect, details, amountTtc);
+        });
+    } else {
+      // Montant nul/négatif (litige, avoir…) : ni facture au montant configuré
+      // (rien n'a été prélevé), ni facture à 0 € — signalement admin.
+      console.error("Prélèvement abonnement à montant non positif — facture non générée", details);
+      await notifyAdminSubscriptionInvoiceFailed(prospect, details, amountTtc);
+    }
+  }
+
+  if (!existingDebit) {
+    await emitPaymentEvent(prospect._id.toString());
+  }
+}
+
+/**
  * Handle billing_requests/fulfilled event.
- * Emitted when user completes Instant Bank Pay flow (primary payment event).
+ * Mandate billing requests (subscription setup) are routed to the mandate flow;
+ * payment billing requests follow the Instant Bank Pay flow (primary payment event).
  */
 async function handleBillingRequestFulfilled(event: GcEvent): Promise<void> {
   const paymentId = event.links?.payment_request_payment;
   const billingRequestId = event.links?.billing_request || null;
+
+  if (billingRequestId) {
+    const mandateProspect = await Prospect.findOne({
+      gcMandateBillingRequestId: billingRequestId,
+    });
+    if (mandateProspect) {
+      await handleMandateSigned(mandateProspect, event, billingRequestId);
+      return;
+    }
+  }
 
   if (paymentId) {
     const details = await resolvePayment(paymentId);
@@ -349,6 +563,7 @@ async function handleBillingRequestFulfilled(event: GcEvent): Promise<void> {
       amount: null,
       prospectId: null,
       billingRequestId,
+      subscriptionId: null,
       customerEmail: null,
       customerName: null,
     });
@@ -357,12 +572,21 @@ async function handleBillingRequestFulfilled(event: GcEvent): Promise<void> {
 
 /**
  * Handle payments/confirmed event.
- * Emitted for bank confirmation of mandates and redelivery payments.
+ * Emitted for bank confirmation of mandates and redeliveries — including the
+ * monthly subscription debits, which are only logged in the timeline.
  */
 async function handlePaymentConfirmed(event: GcEvent): Promise<void> {
   const paymentId = event.links?.payment;
   if (!paymentId) return;
-  await markPaid(await resolvePayment(paymentId));
+
+  const details = await resolvePayment(paymentId);
+
+  if (details.subscriptionId) {
+    await recordSubscriptionPayment(details);
+    return;
+  }
+
+  await markPaid(details);
 }
 
 export async function POST(req: NextRequest) {

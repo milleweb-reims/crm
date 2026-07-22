@@ -9,13 +9,17 @@ import { emitCrmEvent } from "@/lib/events";
 import { sendEmail, type MailAttachment } from "@/lib/mailer";
 import { createQontoInvoice, getQontoInvoicePdf } from "@/lib/qonto";
 
-/** Prospect with payment and invoicing information */
-export interface PaidProspect {
+/** Prospect fields needed to bill a Qonto client (identity + address) */
+export interface InvoiceProspect {
   readonly _id: { toString(): string };
   readonly name: string;
   readonly email?: string;
   readonly emails?: { readonly individual?: string; readonly contact?: string };
   readonly address?: { readonly line1?: string; readonly full?: string; readonly city?: string; readonly postalCode?: string };
+}
+
+/** Prospect with payment and invoicing information */
+export interface PaidProspect extends InvoiceProspect {
   readonly paidAmount?: number | null;
   /** Written by persistInvoiceOnProspect once the Qonto invoice is created. */
   qontoInvoiceId?: string | null;
@@ -43,7 +47,7 @@ async function downloadInvoicePdf(invoiceId: string): Promise<MailAttachment | n
 
 /** Resolves prospect email from multiple sources in order of priority */
 function resolveProspectEmail(
-  prospect: PaidProspect,
+  prospect: InvoiceProspect,
   customerEmail: string | null
 ): string | null {
   return (
@@ -164,6 +168,103 @@ async function recordEmailSentActivity(options: {
     content: `🧾 Facture envoyée à ${options.email}`,
     metadata: { qontoInvoiceId: options.invoiceId },
   });
+}
+
+/** Builds HTML email content for a monthly subscription invoice */
+function buildSubscriptionInvoiceEmailHtml(options: {
+  readonly amountTtc: number;
+  readonly attachment: MailAttachment | null;
+  readonly invoiceUrl: string | undefined;
+}): string {
+  const invoiceInfo =
+    options.attachment
+      ? "Vous trouverez votre facture en pièce jointe."
+      : options.invoiceUrl
+        ? `Votre facture est disponible ici : <a href="${options.invoiceUrl}">voir la facture</a>.`
+        : "Votre facture vous sera transmise très prochainement.";
+
+  return `<h2>Merci !</h2>
+       <p>Bonjour,</p>
+       <p>Nous avons bien reçu votre prélèvement de <strong>${options.amountTtc.toLocaleString("fr-FR")} €</strong> pour votre abonnement mensuel (hébergement, maintenance et mises à jour de votre site).</p>
+       <p>${invoiceInfo}</p>
+       <p>À très vite,<br/>L'équipe Milleweb</p>`;
+}
+
+/**
+ * Generates the Qonto invoice for a monthly subscription debit and emails it to
+ * the client. Unlike the site invoice, nothing is persisted on the prospect
+ * document (invoices recur monthly): the invoice lives in the timeline activity
+ * and in Qonto. Shared idempotence with the debit activity: the caller only
+ * invokes this once per paymentId.
+ */
+export async function generateSubscriptionInvoice(options: {
+  readonly prospect: InvoiceProspect;
+  readonly amountTtc: number; // montant réellement prélevé, TTC en euros
+  readonly customerEmail: string | null;
+  readonly paymentId: string;
+}) {
+  const { prospect, amountTtc, customerEmail, paymentId } = options;
+
+  const prospectEmail = resolveProspectEmail(prospect, customerEmail);
+  const period = new Date().toLocaleDateString("fr-FR", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const invoice = await createQontoInvoice(
+    {
+      name: prospect.name,
+      email: prospectEmail,
+      streetAddress: prospect.address?.line1 || prospect.address?.full || null,
+      city: prospect.address?.city || null,
+      zipCode: prospect.address?.postalCode || null,
+      amount: amountTtc,
+      title: `Abonnement site — ${period}`,
+    },
+    `subscription-invoice-${paymentId}`
+  );
+
+  if (!invoice) return null;
+
+  await Activity.create({
+    prospectId: prospect._id,
+    userId: null,
+    type: "payment",
+    content: `🧾 Facture abonnement générée${invoice.number ? ` (n° ${invoice.number})` : ""} — ${period}`,
+    metadata: {
+      qontoInvoiceId: invoice.id,
+      qontoInvoiceUrl: invoice.invoiceUrl,
+      paymentId,
+      amount: amountTtc,
+    },
+  });
+  emitProspectUpdatedEvent(prospect._id.toString());
+
+  if (prospectEmail) {
+    const attachment = await downloadInvoicePdf(invoice.id);
+    const html = buildSubscriptionInvoiceEmailHtml({
+      amountTtc,
+      attachment,
+      invoiceUrl: invoice.invoiceUrl,
+    });
+
+    const sent = await sendEmail({
+      to: prospectEmail,
+      subject: `Votre facture d'abonnement Milleweb${invoice.number ? ` — n° ${invoice.number}` : ""}`,
+      html,
+      attachments: attachment ? [attachment] : undefined,
+    });
+
+    if (sent) {
+      await recordEmailSentActivity({
+        prospectId: prospect._id,
+        email: prospectEmail,
+        invoiceId: invoice.id,
+      });
+    }
+  }
+
+  return invoice;
 }
 
 /**

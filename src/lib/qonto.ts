@@ -141,7 +141,10 @@ async function createNewClient(input: QontoInvoiceInput): Promise<string | null>
 }
 
 export async function createQontoInvoice(
-  input: QontoInvoiceInput
+  input: QontoInvoiceInput,
+  // Best-effort : dédoublonne les créations concurrentes (relivraison webhook)
+  // via X-Qonto-Idempotency-Key, mécanisme général des POST Qonto.
+  idempotencyKey?: string
 ): Promise<QontoInvoice | null> {
   const iban = process.env.QONTO_IBAN;
   if (!iban) {
@@ -159,6 +162,9 @@ export async function createQontoInvoice(
 
   const res = await qontoFetch("/v2/client_invoices", {
     method: "POST",
+    ...(idempotencyKey
+      ? { headers: { "X-Qonto-Idempotency-Key": idempotencyKey } }
+      : {}),
     body: JSON.stringify({
       client_id: clientId,
       issue_date: today,

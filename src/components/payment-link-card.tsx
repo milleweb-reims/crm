@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
+import { SubscriptionMandateSection } from "@/components/subscription-mandate-section";
 import { ttcFromHt } from "@/lib/vat";
 import type { IProspect } from "@/types";
 
@@ -312,6 +313,13 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
             )}
           </div>
         )}
+
+        {/* Abonnement mensuel : mandat de prélèvement + création auto de la subscription */}
+        <SubscriptionMandateSection
+          prospect={prospect}
+          onUpdated={onUpdated}
+          canEditAmount={canEditQuote}
+        />
 
         {/* Facture Qonto générée à la réception du paiement */}
         {(prospect.qontoInvoiceNumber || prospect.qontoInvoiceUrl) && (

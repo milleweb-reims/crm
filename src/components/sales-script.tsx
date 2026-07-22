@@ -94,7 +94,7 @@ const OBJECTIONS: Objection[] = [
   {
     objection: "Ça va coûter cher / j'ai déjà un abonnement.",
     response:
-      "« Pour l'instant, ça ne vous coûte absolument rien de regarder. Mais pour vous donner un ordre d'idée, si le site vous plaît, c'est un paiement unique autour de 500 euros. Il n'y a pas d'abonnement mensuel derrière, le site est à vous. »",
+      "« Pour l'instant, ça ne vous coûte absolument rien de regarder. Mais pour vous donner un ordre d'idée, si le site vous plaît, c'est un paiement unique autour de 500 euros, puis un abonnement de 29 euros par mois qui couvre l'hébergement, la maintenance et les mises à jour. Le site reste à vous. »",
   },
   {
     objection: "J'ai déjà quelqu'un qui m'appelle tous les jours pour ça.",

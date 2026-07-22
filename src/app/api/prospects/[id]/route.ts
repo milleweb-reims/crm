@@ -25,6 +25,7 @@ interface ProspectDoc {
   readonly lockedAt?: Date | null;
   readonly assignedTo?: { readonly _id: { toString(): string }; readonly name?: string } | null;
   readonly quoteAmount?: number | null;
+  readonly subscriptionAmount?: number | null;
   readonly [key: string]: unknown;
 }
 
@@ -189,27 +190,44 @@ async function processAssignedToField(options: {
 }
 
 /**
- * Validates quote amount field changes. Only admins can modify quote amounts.
+ * Validates admin-only amount field changes (devis, abonnement).
  * Removes field from updates if no change or user lacks permission.
  */
-function processQuoteAmountField(options: {
+function processAdminAmountField(options: {
   readonly body: Record<string, unknown>;
   readonly existing: ProspectDoc;
   readonly session: AuthSession;
+  readonly field: "quoteAmount" | "subscriptionAmount";
+  readonly errorMessage: string;
 }): { readonly updates: Record<string, unknown>; readonly errorResponse?: NextResponse } {
-  const { body, existing, session } = options;
+  const { body, existing, session, field, errorMessage } = options;
 
-  if (!("quoteAmount" in body)) {
+  if (!(field in body)) {
     return { updates: body };
   }
 
-  const requested = body.quoteAmount ?? null;
-  const current = existing.quoteAmount ?? null;
+  const requested = body[field] ?? null;
+  const current = existing[field] ?? null;
 
   if (requested === current) {
     return {
       updates: Object.fromEntries(
-        Object.entries(body).filter(([key]) => key !== "quoteAmount")
+        Object.entries(body).filter(([key]) => key !== field)
+      ),
+    };
+  }
+
+  // null = montant non défini ; sinon, exiger un nombre strictement positif
+  // (un abonnement à 0 € ou négatif casserait le contrat côté GoCardless)
+  if (
+    requested !== null &&
+    (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0)
+  ) {
+    return {
+      updates: body,
+      errorResponse: NextResponse.json(
+        { error: "Montant invalide : nombre strictement positif attendu" },
+        { status: 400 }
       ),
     };
   }
@@ -218,7 +236,7 @@ function processQuoteAmountField(options: {
     return {
       updates: body,
       errorResponse: NextResponse.json(
-        { error: "Seul un admin peut modifier le montant du devis" },
+        { error: errorMessage },
         { status: 403 }
       ),
     };
@@ -491,9 +509,25 @@ export async function PUT(
   if (assignedToResult.errorResponse) return assignedToResult.errorResponse;
   updates = assignedToResult.updates;
 
-  const quoteAmountResult = processQuoteAmountField({ body: updates, existing, session });
+  const quoteAmountResult = processAdminAmountField({
+    body: updates,
+    existing,
+    session,
+    field: "quoteAmount",
+    errorMessage: "Seul un admin peut modifier le montant du devis",
+  });
   if (quoteAmountResult.errorResponse) return quoteAmountResult.errorResponse;
   updates = quoteAmountResult.updates;
+
+  const subscriptionAmountResult = processAdminAmountField({
+    body: updates,
+    existing,
+    session,
+    field: "subscriptionAmount",
+    errorMessage: "Seul un admin peut modifier le montant de l'abonnement",
+  });
+  if (subscriptionAmountResult.errorResponse) return subscriptionAmountResult.errorResponse;
+  updates = subscriptionAmountResult.updates;
 
   const statusError = validateStatusTransition({ updates, existing, session });
   if (statusError) return statusError;

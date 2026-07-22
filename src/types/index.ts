@@ -107,6 +107,14 @@ export interface IProspect {
   readonly gcBillingRequestId: string | null;
   readonly paymentLink: string | null;
   readonly paymentLinkCreatedAt: Date | null;
+  readonly subscriptionAmount: number | null;
+  readonly gcMandateBillingRequestId: string | null;
+  readonly mandateLink: string | null;
+  readonly mandateLinkCreatedAt: Date | null;
+  readonly gcMandateId: string | null;
+  readonly mandateSignedAt: Date | null;
+  readonly gcSubscriptionId: string | null;
+  readonly subscriptionStartDate: Date | null;
   readonly signedDate: Date | null;
   readonly deliveredDate: Date | null;
   readonly deliveryStage: DeliveryStage | null;

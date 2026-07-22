@@ -21,7 +21,7 @@ créé automatiquement via le webhook.
 | Premier prélèvement | Signature + 1 mois (`start_date` de la subscription) |
 | UI | Section « Abonnement » dans la carte « Devis & paiement » existante |
 | Envoi par email | Oui, route `send` dédiée avec template adapté |
-| Facturation Qonto des prélèvements mensuels | Hors périmètre — simple activité dans la timeline |
+| Facturation Qonto des prélèvements mensuels | Oui — `generateSubscriptionInvoice` à chaque prélèvement confirmé : facture Qonto au montant prélevé (libellé « Abonnement site — {mois} »), trace en activité (pas sur les champs uniques du prospect), email au client avec PDF. Idempotence partagée avec l'activité de prélèvement (une facture par paymentId). |
 
 ## Architecture
 
@@ -66,6 +66,11 @@ Nouveaux champs :
   `payment-link/send` — email au prospect avec le lien et le montant mensuel
   TTC (« mandat de prélèvement pour votre abonnement de X €/mois TTC —
   hébergement, maintenance et mises à jour »), activité « 📧 ».
+- `POST /api/prospects/[id]/subscription` : rattrapage (pattern « facture
+  Qonto non générée ») — crée l'abonnement sur le mandat signé si la création
+  automatique du webhook a échoué. Idempotent via `gcSubscriptionId` ; si la
+  date signature + 1 mois est passée, `start_date` est omise (GoCardless
+  prélève à la première date possible).
 - `PUT /api/prospects/[id]` : `subscriptionAmount` accepté, gardé admin
   uniquement (même mécanique que `processQuoteAmountField`).
 
