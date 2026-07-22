@@ -7,7 +7,7 @@ import {
   Draggable,
   type DropResult,
 } from "@hello-pangea/dnd";
-import { Phone, MapPin, User, AlertCircle, Lock } from "lucide-react";
+import { Phone, MapPin, User, AlertCircle, Lock, Globe, ExternalLink } from "lucide-react";
 import { CallbackReminderDialog } from "@/components/callback-reminder-dialog";
 import {
   PROSPECT_STATUSES,
@@ -464,6 +464,30 @@ export function PipelineBoard() {
                                 <MapPin className="h-3 w-3" />
                                 {prospect.address.city}
                               </p>
+                            )}
+                            {prospect.websiteRoot && (
+                              <a
+                                href={prospect.websiteRoot.startsWith("http") ? prospect.websiteRoot : `https://${prospect.websiteRoot}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-xs text-muted-foreground flex items-center gap-1 hover:text-primary hover:underline"
+                              >
+                                <Globe className="h-3 w-3 flex-shrink-0" />
+                                <span className="truncate">{prospect.websiteRoot}</span>
+                              </a>
+                            )}
+                            {prospect.devUrl && (
+                              <a
+                                href={prospect.devUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-xs text-primary font-medium flex items-center gap-1 hover:underline"
+                              >
+                                <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                                Voir le site
+                              </a>
                             )}
                             {prospect.assignedTo && (
                               <p className={cn(
