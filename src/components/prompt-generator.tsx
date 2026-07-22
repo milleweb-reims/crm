@@ -44,7 +44,8 @@ Le site reproduit la structure du site les-soins-by-louison.fr (un institut de b
 
 FICHIERS FOURNIS AVEC CE PROMPT
 - Le logo (s'il est fourni) : utilise-le tel quel, sans le redessiner, le recolorer ni le déformer.
-- Des photos réelles du lieu/des réalisations, si disponibles : utilise uniquement ces photos, en grand format. Interdiction absolue de générer des images ou d'utiliser des visuels génériques de banque d'images. Si une section manque de photo, traite-la en typographie et aplats de couleur, jamais en image inventée.
+- Des photos réelles du lieu/des réalisations, si disponibles : utilise-les en priorité, en grand format.
+- Pour les sections sans photo réelle, utilise des images libres de droit (Unsplash, Pexels…) réalistes et cohérentes avec le métier de ${name} : des scènes crédibles du métier, pas de visuels corporate génériques ni de photos posées avec sourires artificiels. Interdiction absolue de générer des images par IA. Liste les crédits photos requis dans la page mentions légales.
 
 GRAMMAIRE VISUELLE (commune à toutes les sections)
 - Fond général crème/ivoire (jamais blanc pur). Titres dans une couleur encre très foncée (bleu nuit, brun profond ou vert sapin selon le métier). Corps de texte gris moyen.
@@ -73,11 +74,14 @@ STRUCTURE ONE PAGE, DANS CET ORDRE EXACT
       : ""
   }N'invente aucun avis : reprends les avis Google fournis, sinon écris [à compléter].
 9. Bande rendez-vous : grande carte pleine largeur à coins arrondis, fond dans la couleur pastel secondaire de la palette : surtitre + très gros titre serif d'appel à l'action à gauche, gros bouton pilule sombre « Appeler maintenant » (tel:${phone}) à droite.
-10. Footer fond sombre (couleur encre), motif décoratif en trait fin lié au métier en arrière-plan : 3 colonnes — Liens (les ancres de la page), Contact (adresse, téléphone cliquable, email), Horaires (une ligne par jour, jour et valeur reliés par des points de conduite) ; en bas : logo, réseaux sociaux, mentions légales, copyright.
+10. Footer fond sombre (couleur encre), motif décoratif en trait fin lié au métier en arrière-plan : 3 colonnes — Liens (les ancres de la page), Contact (adresse, téléphone cliquable, email), Horaires (une ligne par jour, jour et valeur reliés par des points de conduite) ; en bas : logo, réseaux sociaux, lien vers la page mentions légales, copyright.
    Horaires :
 ${hoursLines}
    Adresse : ${address}
    Téléphone : ${phone}
+
+PAGE MENTIONS LÉGALES (obligatoire)
+En plus de la one page, crée une page « Mentions légales » séparée, accessible depuis le lien du footer. Même charte (fond crème, titres Literata) mais mise en page sobre, sans photos : éditeur du site (${name}, ${address}), directeur de la publication [à compléter], hébergeur [à compléter], contact (${phone}), propriété intellectuelle, crédits photos (dont les images libres de droit utilisées, avec leur source). N'invente aucune donnée légale (SIRET, raison sociale, capital…) : écris [à compléter] pour tout ce qui manque.
 
 RÉDACTION (critère numéro 1 du rendu non-IA)
 - Français naturel, ton direct, phrases courtes, adapté à l'activité de ${name}.
