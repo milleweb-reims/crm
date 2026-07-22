@@ -400,11 +400,12 @@ async function notifySiteToBuild(prospect: RdvProspect, closerName?: string | nu
     isActive: true,
   }).select("email");
   const recipients = [
-    ...team.map((u: { email: string }) => u.email),
-    process.env.ADMIN_EMAIL || "",
-  ]
-    .filter(Boolean)
-    .join(", ");
+    ...new Set(
+      [...team.map((u: { email: string }) => u.email), process.env.ADMIN_EMAIL || ""].filter(
+        Boolean,
+      ),
+    ),
+  ].join(", ");
 
   const rdvLabel = prospect.rdvDate
     ? new Date(prospect.rdvDate).toLocaleString("fr-FR", {

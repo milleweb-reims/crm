@@ -9,6 +9,7 @@ import {
 } from "@hello-pangea/dnd";
 import { Phone, MapPin, User, AlertCircle, Lock, Globe, ExternalLink } from "lucide-react";
 import { CallbackReminderDialog } from "@/components/callback-reminder-dialog";
+import { RdvDateDialog } from "@/components/rdv-date-dialog";
 import {
   PROSPECT_STATUSES,
   DELIVERY_STAGES,
@@ -236,19 +237,26 @@ interface SyncProspectOptions {
  */
 async function syncProspectChanges(options: SyncProspectOptions): Promise<boolean> {
   const { prospectId, body, onConflict, onError } = options;
-  const res = await fetch(`/api/prospects/${prospectId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(`/api/prospects/${prospectId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  if (res.status === 409 || res.status === 423) {
-    const data = await res.json();
-    onConflict(data.error);
-  } else if (!res.ok) {
+    if (res.status === 409 || res.status === 423) {
+      const data = await res.json();
+      onConflict(data.error);
+    } else if (!res.ok) {
+      onError();
+    }
+    return res.ok;
+  } catch {
+    // Réseau coupé : même traitement qu'une erreur serveur, jamais d'exception
+    // qui laisserait l'état optimiste (ou un dialog « saving ») figé.
     onError();
+    return false;
   }
-  return res.ok;
 }
 
 export function PipelineBoard() {
@@ -273,6 +281,12 @@ export function PipelineBoard() {
   const [conflictMsg, setConflictMsg] = useState("");
   /** Fiche venant d'être glissée en « À rappeler » : propose le rappel daté. */
   const [callbackPrompt, setCallbackPrompt] = useState<{ id: string; name: string } | null>(null);
+  /**
+   * Fiche glissée en « RDV Démo » : la date est obligatoire, le statut n'est
+   * persisté qu'à la confirmation (annuler rend la fiche à sa colonne).
+   */
+  const [rdvPrompt, setRdvPrompt] = useState<{ id: string; name: string } | null>(null);
+  const [savingRdv, setSavingRdv] = useState(false);
 
   const loadProspects = useCallback(async () => {
     const res = await fetch(
@@ -314,9 +328,12 @@ export function PipelineBoard() {
   });
 
   useEffect(() => {
+    // Dialog RDV ouvert : pas de polling, le refetch écraserait le déplacement
+    // optimiste pendant que le closer saisit la date.
+    if (rdvPrompt) return;
     const interval = setInterval(fetchProspects, 10_000);
     return () => clearInterval(interval);
-  }, [fetchProspects]);
+  }, [fetchProspects, rdvPrompt]);
 
   async function handleDragEnd(result: DropResult): Promise<void> {
     const { destination, draggableId, source } = result;
@@ -353,6 +370,13 @@ export function PipelineBoard() {
     setConflictMsg("");
 
     if (sourceKey !== destKey) {
+      // « RDV Démo » exige une date : on garde le déplacement à l'écran mais on
+      // ne persiste qu'à la confirmation du dialog (annuler → retour arrière).
+      if (!isDev && destKey === "rdv") {
+        setRdvPrompt({ id: draggableId, name: movedProspect.name });
+        return;
+      }
+
       const body = computePersistenceBody({
         isDev,
         destKey,
@@ -375,6 +399,31 @@ export function PipelineBoard() {
         setCallbackPrompt({ id: draggableId, name: movedProspect.name });
       }
     }
+  }
+
+  async function handleConfirmRdvDrop(rdvDateTime: string) {
+    if (!rdvPrompt || savingRdv) return;
+    setSavingRdv(true);
+    const showError = (message: string) => {
+      setConflictMsg(message);
+      setTimeout(() => setConflictMsg(""), 5000);
+    };
+    await syncProspectChanges({
+      prospectId: rdvPrompt.id,
+      body: { status: "rdv", rdvDate: new Date(rdvDateTime).toISOString() },
+      onConflict: showError,
+      onError: () => showError("Impossible d'enregistrer le RDV — réessaie"),
+    });
+    setSavingRdv(false);
+    setRdvPrompt(null);
+    // Succès : la colonne est confirmée côté serveur ; échec : la fiche revient.
+    fetchProspects();
+  }
+
+  function handleCancelRdvDrop() {
+    setRdvPrompt(null);
+    // Le statut n'a jamais été persisté : on rétablit simplement l'affichage.
+    fetchProspects();
   }
 
   if (loading) {
@@ -527,6 +576,16 @@ export function PipelineBoard() {
           }}
           prospectId={callbackPrompt.id}
           prospectName={callbackPrompt.name}
+        />
+      )}
+
+      {rdvPrompt && (
+        <RdvDateDialog
+          open
+          prospectName={rdvPrompt.name}
+          saving={savingRdv}
+          onCancel={handleCancelRdvDrop}
+          onConfirm={handleConfirmRdvDrop}
         />
       )}
     </DragDropContext>
