@@ -10,6 +10,7 @@ import {
   Code,
   UserX,
   UserCheck,
+  UserCog,
 } from "lucide-react";
 import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,10 @@ function ImpactRow({ count, label }: Readonly<{ count: number; label: string }>)
 export default function SettingsPage() {
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === "admin";
+  // Pendant une substitution, `session.user` est le compte visé : proposer une
+  // nouvelle substitution depuis cet écran n'aurait pas de sens. On revient
+  // d'abord à son compte via le bandeau.
+  const canImpersonate = isAdmin && !session?.impersonator;
 
   const [users, setUsers] = useState<IUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,6 +150,30 @@ export default function SettingsPage() {
       setFormError(data.error || "Erreur lors de la mise à jour");
     }
     fetchUsers();
+  }
+
+  /**
+   * Prend l'identité d'un compte. Rechargement complet plutôt que navigation
+   * côté client : la substitution est portée par un cookie lu côté serveur, et
+   * SessionProvider garde la session en cache tant que le document n'est pas
+   * rechargé.
+   */
+  async function handleImpersonate(user: IUser) {
+    setFormError("");
+
+    const res = await fetch("/api/impersonation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: user._id }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setFormError(data.error || "Substitution impossible");
+      return;
+    }
+
+    window.location.assign("/");
   }
 
   function openDeleteModal(user: IUser) {
@@ -340,6 +369,23 @@ export default function SettingsPage() {
                             <td className="py-3 text-right">
                               {user._id !== session?.user?.id && (
                                 <div className="flex items-center justify-end gap-1">
+                                  {canImpersonate && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      title={
+                                        user.isActive
+                                          ? `Se substituer à ${user.name} — voir et agir en son nom`
+                                          : "Compte désactivé : substitution impossible"
+                                      }
+                                      disabled={!user.isActive}
+                                      onClick={() => handleImpersonate(user)}
+                                      data-test={`impersonate-${user._id}`}
+                                    >
+                                      <UserCog className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="icon"

@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { connectDB } from "./db";
+import { resolveImpersonatedUser, stopImpersonation } from "./impersonation";
 import { User } from "./models/user.model";
 import type { UserRole } from "@/types";
 
@@ -16,6 +17,17 @@ declare module "next-auth" {
       email: string;
       role: UserRole;
     };
+    /**
+     * Présent uniquement pendant une substitution : le vrai compte derrière
+     * `user`. C'est lui qui autorise l'arrêt de la substitution, et sa présence
+     * déclenche le bandeau permanent côté interface.
+     */
+    impersonator?: {
+      readonly id: string;
+      readonly name: string;
+      readonly email: string;
+      readonly role: UserRole;
+    } | null;
   }
 }
 
@@ -93,10 +105,44 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
       return token;
     },
-    session({ session, token }) {
+    async session({ session, token }) {
       session.user.id = token.id as string;
       session.user.role = token.role as UserRole;
-      return session;
+
+      const impersonated = await resolveImpersonatedUser({
+        realUserId: session.user.id,
+        realRole: session.user.role,
+      });
+
+      if (!impersonated) return session;
+
+      // L'identité effective REMPLACE celle de l'admin. C'est ce qui rend la
+      // substitution complète sans toucher au reste du code : les points de
+      // contrôle des routes lisent `session.user`, et `useSession` sert la même
+      // chose au navigateur — sidebar, dashboard et filtres de visibilité
+      // basculent donc ensemble, sans divergence possible entre les deux côtés.
+      return {
+        ...session,
+        user: { ...session.user, ...impersonated },
+        impersonator: {
+          id: session.user.id,
+          name: session.user.name,
+          email: session.user.email,
+          role: session.user.role,
+        },
+      };
+    },
+  },
+  events: {
+    /**
+     * Une substitution ne survit pas à la déconnexion. Le préfixe du cookie la
+     * rend déjà inerte pour un autre compte, mais la purger évite qu'un admin qui
+     * se reconnecte se retrouve substitué sans l'avoir demandé.
+     */
+    async signOut() {
+      // La suppression échoue si Auth.js ne peut pas écrire dans la réponse :
+      // ne jamais faire échouer une déconnexion pour ça.
+      await stopImpersonation().catch(() => {});
     },
   },
   pages: {
