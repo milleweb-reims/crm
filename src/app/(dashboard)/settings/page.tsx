@@ -11,6 +11,7 @@ import {
   UserX,
   UserCheck,
   UserCog,
+  Euro,
 } from "lucide-react";
 import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DEFAULT_QUOTE_AMOUNT,
+  DEFAULT_SUBSCRIPTION_AMOUNT,
+} from "@/lib/pricing";
 import type { IUser, UserRole } from "@/types";
 
 const roleConfig: Record<UserRole, { label: string; icon: React.ElementType; color: "violet" | "blue" | "orange" }> = {
@@ -56,7 +61,10 @@ export default function SettingsPage() {
   // Pendant une substitution, `session.user` est le compte visé : proposer une
   // nouvelle substitution depuis cet écran n'aurait pas de sens. On revient
   // d'abord à son compte via le bandeau.
-  const canImpersonate = isAdmin && !session?.impersonator;
+  // Pendant une substitution, on n'écrit pas sous l'identité d'un autre : ni
+  // nouvelle substitution, ni changement de tarif. On revient d'abord à son
+  // compte via le bandeau.
+  const actingAsSelf = isAdmin && !session?.impersonator;
 
   const [users, setUsers] = useState<IUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +87,13 @@ export default function SettingsPage() {
   // Compte dont on attend le récapitulatif : une réponse tardive concernant un
   // autre compte doit être ignorée.
   const pendingImpactFor = useRef<string | null>(null);
+
+  // Tarifs d'un compte : création et abonnement, en euros HT
+  const [pricingTarget, setPricingTarget] = useState<IUser | null>(null);
+  const [pricingQuote, setPricingQuote] = useState("");
+  const [pricingSubscription, setPricingSubscription] = useState("");
+  const [savingPricing, setSavingPricing] = useState(false);
+  const [pricingError, setPricingError] = useState("");
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState("");
@@ -174,6 +189,52 @@ export default function SettingsPage() {
     }
 
     window.location.assign("/");
+  }
+
+  function openPricingModal(user: IUser) {
+    setPricingTarget(user);
+    setPricingQuote(String(user.quoteAmount ?? DEFAULT_QUOTE_AMOUNT));
+    setPricingSubscription(
+      String(user.subscriptionAmount ?? DEFAULT_SUBSCRIPTION_AMOUNT)
+    );
+    setPricingError("");
+  }
+
+  /**
+   * Enregistre les tarifs du compte. Les montants sont convertis en nombre ici :
+   * l'API refuse une chaîne, et c'est voulu — un formulaire qui n'a pas converti
+   * sa saisie ne doit pas écrire un prix.
+   */
+  async function handleSavePricing() {
+    if (!pricingTarget) return;
+
+    const quoteAmount = Number(pricingQuote.replace(",", "."));
+    const subscriptionAmount = Number(pricingSubscription.replace(",", "."));
+
+    if (!(quoteAmount > 0) || !(subscriptionAmount > 0)) {
+      setPricingError("Les deux montants doivent être strictement positifs");
+      return;
+    }
+
+    setSavingPricing(true);
+    setPricingError("");
+
+    const res = await fetch(`/api/users/${pricingTarget._id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quoteAmount, subscriptionAmount }),
+    });
+
+    setSavingPricing(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setPricingError(data.error || "Échec de l'enregistrement des tarifs");
+      return;
+    }
+
+    setPricingTarget(null);
+    fetchUsers();
   }
 
   function openDeleteModal(user: IUser) {
@@ -343,6 +404,9 @@ export default function SettingsPage() {
                         <th className="text-left py-2 font-medium text-muted-foreground hidden sm:table-cell">
                           Statut
                         </th>
+                        <th className="text-left py-2 font-medium text-muted-foreground hidden md:table-cell">
+                          Tarifs
+                        </th>
                         <th className="text-right py-2 font-medium text-muted-foreground">
                           Actions
                         </th>
@@ -366,10 +430,31 @@ export default function SettingsPage() {
                                 {user.isActive ? "Actif" : "Inactif"}
                               </Badge>
                             </td>
+                            <td className="py-3 hidden md:table-cell tabular-nums text-muted-foreground">
+                              {(user.quoteAmount ?? DEFAULT_QUOTE_AMOUNT).toLocaleString("fr-FR")}
+                              {" € / "}
+                              {(user.subscriptionAmount ?? DEFAULT_SUBSCRIPTION_AMOUNT).toLocaleString("fr-FR")}
+                              {" €"}
+                            </td>
                             <td className="py-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {/* Tarifs : y compris sur son propre compte, un
+                                    admin pouvant lui aussi détenir une fiche. */}
+                                {actingAsSelf && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    title={`Tarifs de ${user.name} — création et abonnement`}
+                                    onClick={() => openPricingModal(user)}
+                                    data-test={`edit-pricing-${user._id}`}
+                                  >
+                                    <Euro className="h-4 w-4" />
+                                  </Button>
+                                )}
                               {user._id !== session?.user?.id && (
-                                <div className="flex items-center justify-end gap-1">
-                                  {canImpersonate && (
+                                <>
+                                  {actingAsSelf && (
                                     <Button
                                       variant="ghost"
                                       size="icon"
@@ -414,8 +499,9 @@ export default function SettingsPage() {
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
-                                </div>
+                                </>
                               )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -458,6 +544,91 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Tarifs du compte : appliqués à toutes les fiches qu'il détient */}
+      <Dialog
+        open={pricingTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !savingPricing) setPricingTarget(null);
+        }}
+      >
+        <DialogContent data-test="pricing-modal">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Euro className="h-5 w-5 text-muted-foreground" />
+              Tarifs de {pricingTarget?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Ces montants s&apos;appliquent à toutes les fiches que ce compte
+              détient. Un lien de paiement ou un abonnement déjà généré conserve
+              son montant d&apos;origine — GoCardless le fige à la création.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <label
+                htmlFor="pricing-quote"
+                className="block text-sm font-medium text-foreground mb-1.5"
+              >
+                Création du site (€ HT)
+              </label>
+              <Input
+                id="pricing-quote"
+                type="number"
+                min="1"
+                step="50"
+                value={pricingQuote}
+                onChange={(e) => setPricingQuote(e.target.value)}
+                disabled={savingPricing}
+                data-test="pricing-quote"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="pricing-subscription"
+                className="block text-sm font-medium text-foreground mb-1.5"
+              >
+                Abonnement mensuel (€ HT)
+              </label>
+              <Input
+                id="pricing-subscription"
+                type="number"
+                min="1"
+                step="1"
+                value={pricingSubscription}
+                onChange={(e) => setPricingSubscription(e.target.value)}
+                disabled={savingPricing}
+                data-test="pricing-subscription"
+              />
+            </div>
+
+            {pricingError && (
+              <p className="text-sm text-red-600">{pricingError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPricingTarget(null)}
+              disabled={savingPricing}
+            >
+              Annuler
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSavePricing}
+              disabled={savingPricing}
+              data-test="pricing-submit"
+            >
+              {savingPricing ? "Enregistrement…" : "Enregistrer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Suppression définitive : récapitulatif chiffré + choix du repreneur */}
       <Dialog

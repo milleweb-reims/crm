@@ -7,7 +7,6 @@ import {
   CreditCard,
   Download,
   FileText,
-  Pencil,
   RefreshCw,
   Send,
 } from "lucide-react";
@@ -20,19 +19,20 @@ import type { IProspect } from "@/types";
 interface PaymentLinkCardProps {
   readonly prospect: IProspect;
   readonly onUpdated: () => void;
-  /** Seul un admin peut définir ou modifier le montant du devis. */
-  readonly canEditQuote: boolean;
+  /** Le rattrapage de facture Qonto est réservé à l'admin. */
+  readonly isAdmin: boolean;
   readonly className?: string;
 }
 
 /**
- * Carte « Devis & paiement » : montant du devis éditable en ligne, puis
- * génération / copie / envoi du lien de paiement GoCardless correspondant.
+ * Carte « Devis & paiement » : montant appliqué au client, puis génération /
+ * copie / envoi du lien de paiement GoCardless correspondant.
+ *
+ * Le montant n'est pas modifiable ici : c'est le tarif de création du closer qui
+ * détient la fiche, réglé dans Paramètres → Utilisateurs. Il est résolu côté
+ * serveur et servi dans `prospect.pricing`.
  */
-export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }: PaymentLinkCardProps) {
-  const [editingQuote, setEditingQuote] = useState(false);
-  const [quoteInput, setQuoteInput] = useState("");
-  const [savingQuote, setSavingQuote] = useState(false);
+export function PaymentLinkCard({ prospect, onUpdated, isAdmin, className }: PaymentLinkCardProps) {
   const [generating, setGenerating] = useState(false);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [sending, setSending] = useState(false);
@@ -42,41 +42,9 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
 
   const prospectEmail =
     prospect.email || prospect.emails?.individual || prospect.emails?.contact;
-  const hasQuote = !!prospect.quoteAmount && prospect.quoteAmount > 0;
-
-  function startEditQuote() {
-    // Prix par défaut d'un site : 500 €
-    setQuoteInput(prospect.quoteAmount ? String(prospect.quoteAmount) : "500");
-    setEditingQuote(true);
-  }
-
-  async function handleSaveQuote() {
-    const amount = Number(quoteInput.replace(",", "."));
-    if (!amount || amount <= 0) {
-      setError("Montant invalide");
-      return;
-    }
-    setSavingQuote(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/prospects/${prospect._id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteAmount: amount }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Échec de l'enregistrement du devis");
-        return;
-      }
-      setEditingQuote(false);
-      onUpdated();
-    } catch {
-      setError("Erreur réseau — réessaie");
-    } finally {
-      setSavingQuote(false);
-    }
-  }
+  // Résolu par le serveur depuis le détenteur de la fiche. Absent seulement le
+  // temps du premier chargement.
+  const quoteAmount = prospect.pricing?.quoteAmount ?? null;
 
   async function handleGenerate(regenerate = false) {
     setGenerating(true);
@@ -158,71 +126,21 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
         <CreditCard className="h-4 w-4 text-muted-foreground" />
       </div>
       <CardContent className="mt-4 space-y-4">
-        {/* Montant du devis */}
-        {editingQuote && canEditQuote ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <input
-                type="number"
-                min="0"
-                step="50"
-                value={quoteInput}
-                onChange={(e) => setQuoteInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSaveQuote()}
-                placeholder="500"
-                autoFocus
-                className="h-10 w-40 rounded-lg border border-border bg-background pl-3 pr-12 text-sm"
-                data-test="quote-amount-input"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                € HT
-              </span>
-            </div>
-            <Button
-              size="sm"
-              disabled={savingQuote}
-              onClick={handleSaveQuote}
-              data-test="save-quote"
-            >
-              {savingQuote ? "Enregistrement…" : "Enregistrer"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditingQuote(false)}
-            >
-              Annuler
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-end justify-between gap-2">
-            <div>
-              <p className="text-xs text-muted-foreground">Montant du devis</p>
-              <p className="text-3xl font-semibold text-foreground">
-                {hasQuote
-                  ? `${prospect.quoteAmount!.toLocaleString("fr-FR")} € HT`
-                  : "—"}
-              </p>
-              {hasQuote && (
-                <p className="text-xs text-muted-foreground">
-                  soit {ttcFromHt(prospect.quoteAmount!).toLocaleString("fr-FR")} € TTC
-                  payés par le client
-                </p>
-              )}
-            </div>
-            {canEditQuote && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={startEditQuote}
-                data-test="edit-quote"
-              >
-                <Pencil className="h-4 w-4" />
-                {hasQuote ? "Modifier" : "Définir le devis"}
-              </Button>
-            )}
-          </div>
-        )}
+        {/* Tarif appliqué — réglé sur le compte du closer, pas ici */}
+        <div>
+          <p className="text-xs text-muted-foreground">Montant du devis</p>
+          <p className="text-3xl font-semibold text-foreground">
+            {quoteAmount !== null
+              ? `${quoteAmount.toLocaleString("fr-FR")} € HT`
+              : "—"}
+          </p>
+          {quoteAmount !== null && (
+            <p className="text-xs text-muted-foreground">
+              soit {ttcFromHt(quoteAmount).toLocaleString("fr-FR")} € TTC payés
+              par le client — tarif du closer sur cette fiche
+            </p>
+          )}
+        </div>
 
         <div className="border-t border-border" />
 
@@ -230,15 +148,11 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
         {!prospect.paymentLink ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              {hasQuote
-                ? "Aucun lien de paiement pour ce client."
-                : canEditQuote
-                  ? "Définis le devis pour générer le lien de paiement."
-                  : "Le montant du devis doit être défini par un admin."}
+              Aucun lien de paiement pour ce client.
             </p>
             <Button
               size="sm"
-              disabled={!hasQuote || generating}
+              disabled={generating}
               onClick={() => handleGenerate(false)}
               data-test="generate-payment-link"
             >
@@ -318,7 +232,7 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
         <SubscriptionMandateSection
           prospect={prospect}
           onUpdated={onUpdated}
-          canEditAmount={canEditQuote}
+          isAdmin={isAdmin}
         />
 
         {/* Facture Qonto générée à la réception du paiement */}
@@ -358,7 +272,7 @@ export function PaymentLinkCard({ prospect, onUpdated, canEditQuote, className }
         )}
 
         {/* Rattrapage : payé mais pas de facture (échec de la génération auto) */}
-        {canEditQuote &&
+        {isAdmin &&
           prospect.paidAt &&
           !prospect.qontoInvoiceId &&
           !prospect.qontoInvoiceNumber && (

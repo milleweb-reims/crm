@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
+import { prospectPricing } from "@/lib/pricing-service";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
@@ -46,13 +47,10 @@ export async function POST(
     );
   }
 
-  const amountHt = prospect.subscriptionAmount ?? 29;
-  if (amountHt <= 0) {
-    return NextResponse.json(
-      { error: "Montant d'abonnement invalide — corrige-le d'abord" },
-      { status: 400 }
-    );
-  }
+  // Tarif du closer qui détient la fiche, toujours strictement positif.
+  const { subscriptionAmount: amountHt } = await prospectPricing(
+    prospect.assignedTo
+  );
 
   // Premier prélèvement un mois après la signature ; si cette date est déjà
   // passée (rattrapage tardif), GoCardless choisit la première date possible.

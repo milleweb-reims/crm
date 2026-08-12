@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
+import { prospectPricing } from "@/lib/pricing-service";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
@@ -50,7 +51,8 @@ export async function POST(
     );
   }
 
-  const monthlyTtc = `${ttcFromHt(prospect.subscriptionAmount ?? 29).toLocaleString("fr-FR")} €`;
+  const { subscriptionAmount } = await prospectPricing(prospect.assignedTo);
+  const monthlyTtc = `${ttcFromHt(subscriptionAmount).toLocaleString("fr-FR")} €`;
   const html = buildMandateLinkEmail(prospect.mandateLink, monthlyTtc);
 
   const sent = await sendEmail({

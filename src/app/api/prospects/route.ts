@@ -76,12 +76,6 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
 
-  // Le montant du devis est réservé à l'admin : à la création par un closer,
-  // on garde le prix par défaut du modèle (500 €).
-  if (session.user.role !== "admin") {
-    delete body.quoteAmount;
-  }
-
   const payload = withCityKey(body);
 
   /**

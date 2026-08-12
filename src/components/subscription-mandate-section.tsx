@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Pencil, RefreshCw, Repeat, Send } from "lucide-react";
+import { Check, Copy, RefreshCw, Repeat, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ttcFromHt } from "@/lib/vat";
 import type { IProspect } from "@/types";
@@ -9,8 +9,8 @@ import type { IProspect } from "@/types";
 interface SubscriptionMandateSectionProps {
   readonly prospect: IProspect;
   readonly onUpdated: () => void;
-  /** Seul un admin peut modifier le montant de l'abonnement. */
-  readonly canEditAmount: boolean;
+  /** La création manuelle de l'abonnement est réservée à l'admin. */
+  readonly isAdmin: boolean;
 }
 
 function formatDateFr(date: Date | string): string {
@@ -23,17 +23,17 @@ function formatDateFr(date: Date | string): string {
 
 /**
  * Section « Abonnement » de la carte « Devis & paiement » : montant mensuel
- * éditable, génération / copie / envoi du lien de mandat GoCardless, puis suivi
+ * appliqué, génération / copie / envoi du lien de mandat GoCardless, puis suivi
  * du mandat signé et de l'abonnement créé automatiquement par le webhook.
+ *
+ * Le montant n'est pas modifiable ici : c'est le tarif d'abonnement du closer qui
+ * détient la fiche, réglé dans Paramètres → Utilisateurs.
  */
 export function SubscriptionMandateSection({
   prospect,
   onUpdated,
-  canEditAmount,
+  isAdmin,
 }: SubscriptionMandateSectionProps) {
-  const [editingAmount, setEditingAmount] = useState(false);
-  const [amountInput, setAmountInput] = useState("");
-  const [savingAmount, setSavingAmount] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [creating, setCreating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -43,42 +43,9 @@ export function SubscriptionMandateSection({
 
   const prospectEmail =
     prospect.email || prospect.emails?.individual || prospect.emails?.contact;
-  // Prix par défaut de l'abonnement : 29 € HT/mois
-  const amountHt = prospect.subscriptionAmount ?? 29;
+  // Résolu par le serveur depuis le détenteur de la fiche.
+  const amountHt = prospect.pricing?.subscriptionAmount ?? null;
   const subscriptionActive = !!prospect.gcSubscriptionId;
-
-  function startEditAmount() {
-    setAmountInput(String(amountHt));
-    setEditingAmount(true);
-  }
-
-  async function handleSaveAmount() {
-    const amount = Number(amountInput.replace(",", "."));
-    if (!amount || amount <= 0) {
-      setError("Montant invalide");
-      return;
-    }
-    setSavingAmount(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/prospects/${prospect._id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscriptionAmount: amount }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Échec de l'enregistrement du montant");
-        return;
-      }
-      setEditingAmount(false);
-      onUpdated();
-    } catch {
-      setError("Erreur réseau — réessaie");
-    } finally {
-      setSavingAmount(false);
-    }
-  }
 
   async function handleGenerate(regenerate = false) {
     setGenerating(true);
@@ -157,67 +124,24 @@ export function SubscriptionMandateSection({
     <>
       <div className="border-t border-border" />
       <div className="space-y-3">
-        {/* Montant de l'abonnement */}
-        {editingAmount && canEditAmount ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSaveAmount()}
-                placeholder="29"
-                autoFocus
-                className="h-10 w-40 rounded-lg border border-border bg-background pl-3 pr-20 text-sm"
-                data-test="subscription-amount-input"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                € HT/mois
-              </span>
-            </div>
-            <Button
-              size="sm"
-              disabled={savingAmount}
-              onClick={handleSaveAmount}
-              data-test="save-subscription-amount"
-            >
-              {savingAmount ? "Enregistrement…" : "Enregistrer"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditingAmount(false)}
-            >
-              Annuler
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-end justify-between gap-2">
-            <div>
-              <p className="text-xs text-muted-foreground">Abonnement mensuel</p>
-              <p className="text-xl font-semibold text-foreground">
-                {amountHt.toLocaleString("fr-FR")} € HT/mois
-              </p>
-              <p className="text-xs text-muted-foreground">
-                soit {ttcFromHt(amountHt).toLocaleString("fr-FR")} € TTC prélevés
-                chaque mois
-              </p>
-            </div>
-            {canEditAmount && !subscriptionActive && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={startEditAmount}
-                data-test="edit-subscription-amount"
-              >
-                <Pencil className="h-4 w-4" />
-                Modifier
-              </Button>
-            )}
-          </div>
-        )}
+        {/* Tarif appliqué — réglé sur le compte du closer, pas ici */}
+        <div>
+          <p className="text-xs text-muted-foreground">Abonnement mensuel</p>
+          <p className="text-xl font-semibold text-foreground">
+            {amountHt !== null
+              ? `${amountHt.toLocaleString("fr-FR")} € HT/mois`
+              : "—"}
+          </p>
+          {amountHt !== null && (
+            <p className="text-xs text-muted-foreground">
+              {subscriptionActive
+                ? // Le montant affiché est le tarif courant du closer ; GoCardless
+                  // prélève celui figé à la création de l'abonnement.
+                  "Tarif actuel du closer — l'abonnement en cours conserve son montant d'origine."
+                : `soit ${ttcFromHt(amountHt).toLocaleString("fr-FR")} € TTC prélevés chaque mois — tarif du closer sur cette fiche`}
+            </p>
+          )}
+        </div>
 
         {/* Statut de l'abonnement / du mandat / du lien */}
         {subscriptionActive ? (
@@ -237,7 +161,7 @@ export function SubscriptionMandateSection({
               ✍️ Mandat signé le {formatDateFr(prospect.mandateSignedAt)} —
               abonnement pas encore actif.
             </p>
-            {canEditAmount && (
+            {isAdmin && (
               <Button
                 size="sm"
                 disabled={creating}

@@ -96,8 +96,10 @@ const prospectSchema = new Schema(
       default: null,
     },
     lockedAt: { type: Date, default: null },
-    // Prix par défaut d'un site : 500 €
-    quoteAmount: { type: Number, default: 500 },
+    // Aucun montant sur la fiche : les tarifs de création et d'abonnement
+    // appartiennent au compte qui la détient (voir pricing.ts). Les documents
+    // antérieurs peuvent encore porter quoteAmount / subscriptionAmount ; plus
+    // rien ne les lit.
     devUrl: { type: String, default: null },
     deliveryStage: {
       type: String,
@@ -114,8 +116,6 @@ const prospectSchema = new Schema(
     gcBillingRequestId: { type: String, default: null },
     paymentLink: { type: String, default: null },
     paymentLinkCreatedAt: { type: Date, default: null },
-    // Abonnement mensuel (hébergement, maintenance, mises à jour) : 29 € HT par défaut
-    subscriptionAmount: { type: Number, default: 29 },
     gcMandateBillingRequestId: { type: String, default: null },
     mandateLink: { type: String, default: null },
     mandateLinkCreatedAt: { type: Date, default: null },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { connectDB } from "@/lib/db";
+import { prospectPricing } from "@/lib/pricing-service";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { emitCrmEvent } from "@/lib/events";
@@ -217,7 +218,10 @@ async function updatePaidFields(
   details: PaymentDetails
 ): Promise<void> {
   prospect.paidAt = new Date();
-  prospect.paidAmount = details.amount ?? prospect.quoteAmount ?? null;
+  // Le montant vient de GoCardless, seule source de ce qui a réellement été
+  // prélevé. Aucun repli sur un tarif configuré : il ne dirait rien du montant
+  // encaissé, et les factures Qonto s'appuient sur ce champ.
+  prospect.paidAmount = details.amount ?? null;
   prospect.gcPaymentId = details.paymentId;
   prospect.status = "paye";
   await prospect.save();
@@ -373,7 +377,10 @@ async function handleMandateSigned(
     metadata: { mandateId, billingRequestId },
   });
 
-  const amountHt = prospect.subscriptionAmount ?? 29;
+  // Tarif du closer qui détient la fiche, au moment de créer l'abonnement.
+  const { subscriptionAmount: amountHt } = await prospectPricing(
+    prospect.assignedTo
+  );
   // Premier prélèvement un mois après la signature, clampé en fin de mois
   const startDate = addOneMonthClamped(signedAt);
 
@@ -494,8 +501,10 @@ async function recordSubscriptionPayment(details: PaymentDetails): Promise<void>
   });
 
   if (!existingInvoice) {
-    const amountTtc =
-      details.amount ?? ttcFromHt(prospect.subscriptionAmount ?? 29);
+    // Jamais de repli sur le tarif configuré : sur un abonnement lancé plus
+    // tôt, il ne dit rien de ce qui a été prélevé, et une facture au mauvais
+    // montant est pire que pas de facture. La branche `else` alerte l'admin.
+    const amountTtc = details.amount ?? 0;
 
     if (amountTtc > 0) {
       // En arrière-plan : ne bloque pas la réponse webhook

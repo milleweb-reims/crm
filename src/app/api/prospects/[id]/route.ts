@@ -9,6 +9,7 @@ import { isLockActive } from "@/lib/lock";
 import { sendEmail } from "@/lib/mailer";
 import { normalizeCity } from "@/lib/city";
 import { computeStatusChangeEffects } from "@/lib/prospect-status";
+import { prospectPricing } from "@/lib/pricing-service";
 import type { UserRole } from "@/types";
 
 interface RdvProspect {
@@ -25,8 +26,6 @@ interface ProspectDoc {
   readonly lockedBy?: { readonly _id: { toString(): string }; readonly name: string } | null;
   readonly lockedAt?: Date | null;
   readonly assignedTo?: { readonly _id: { toString(): string }; readonly name?: string } | null;
-  readonly quoteAmount?: number | null;
-  readonly subscriptionAmount?: number | null;
   readonly [key: string]: unknown;
 }
 
@@ -191,62 +190,6 @@ async function processAssignedToField(options: {
 }
 
 /**
- * Validates admin-only amount field changes (devis, abonnement).
- * Removes field from updates if no change or user lacks permission.
- */
-function processAdminAmountField(options: {
-  readonly body: Record<string, unknown>;
-  readonly existing: ProspectDoc;
-  readonly session: AuthSession;
-  readonly field: "quoteAmount" | "subscriptionAmount";
-  readonly errorMessage: string;
-}): { readonly updates: Record<string, unknown>; readonly errorResponse?: NextResponse } {
-  const { body, existing, session, field, errorMessage } = options;
-
-  if (!(field in body)) {
-    return { updates: body };
-  }
-
-  const requested = body[field] ?? null;
-  const current = existing[field] ?? null;
-
-  if (requested === current) {
-    return {
-      updates: Object.fromEntries(
-        Object.entries(body).filter(([key]) => key !== field)
-      ),
-    };
-  }
-
-  // null = montant non défini ; sinon, exiger un nombre strictement positif
-  // (un abonnement à 0 € ou négatif casserait le contrat côté GoCardless)
-  if (
-    requested !== null &&
-    (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0)
-  ) {
-    return {
-      updates: body,
-      errorResponse: NextResponse.json(
-        { error: "Montant invalide : nombre strictement positif attendu" },
-        { status: 400 }
-      ),
-    };
-  }
-
-  if (session.user.role !== "admin") {
-    return {
-      updates: body,
-      errorResponse: NextResponse.json(
-        { error: errorMessage },
-        { status: 403 }
-      ),
-    };
-  }
-
-  return { updates: body };
-}
-
-/**
  * Validates status transition rules. Prevents setting "payé" manually
  * (GoCardless webhook sets it) and blocks status changes on paid prospects
  * except by admins.
@@ -388,7 +331,12 @@ export async function GET(
     );
   }
 
-  return NextResponse.json(prospect);
+  // Les tarifs ne sont pas stockés sur la fiche : ils sont résolus depuis son
+  // détenteur et joints à la réponse, pour que l'interface n'ait aucun prix à
+  // calculer de son côté.
+  const pricing = await prospectPricing(prospect.assignedTo);
+
+  return NextResponse.json({ ...prospect, pricing });
 }
 
 export async function PUT(
@@ -430,26 +378,6 @@ export async function PUT(
   });
   if (assignedToResult.errorResponse) return assignedToResult.errorResponse;
   updates = assignedToResult.updates;
-
-  const quoteAmountResult = processAdminAmountField({
-    body: updates,
-    existing,
-    session,
-    field: "quoteAmount",
-    errorMessage: "Seul un admin peut modifier le montant du devis",
-  });
-  if (quoteAmountResult.errorResponse) return quoteAmountResult.errorResponse;
-  updates = quoteAmountResult.updates;
-
-  const subscriptionAmountResult = processAdminAmountField({
-    body: updates,
-    existing,
-    session,
-    field: "subscriptionAmount",
-    errorMessage: "Seul un admin peut modifier le montant de l'abonnement",
-  });
-  if (subscriptionAmountResult.errorResponse) return subscriptionAmountResult.errorResponse;
-  updates = subscriptionAmountResult.updates;
 
   const statusError = validateStatusTransition({ updates, existing, session });
   if (statusError) return statusError;

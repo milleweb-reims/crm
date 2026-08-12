@@ -8,6 +8,7 @@ import { Activity } from "@/lib/models/activity.model";
 import { Reminder } from "@/lib/models/reminder.model";
 import { Territory } from "@/lib/models/territory.model";
 import { getAuthSession, unauthorized, forbidden } from "@/lib/api-auth";
+import { pickPricingUpdates } from "@/lib/pricing";
 import { emitCrmEvent } from "@/lib/events";
 import type { UserRole } from "@/types";
 
@@ -106,6 +107,18 @@ export async function PUT(
 
   const isAdmin = session.user.role === "admin";
   const updates = pickUpdatableFields(body, isAdmin);
+
+  // Les tarifs sont validés à part : un montant invalide doit être refusé, pas
+  // silencieusement écarté comme le fait pickUpdatableFields pour un champ
+  // inconnu. Réservés à l'admin, y compris sur son propre compte — un closer ne
+  // fixe pas son prix de vente.
+  if (isAdmin) {
+    const pricing = pickPricingUpdates(body);
+    if ("error" in pricing) {
+      return NextResponse.json({ error: pricing.error }, { status: 400 });
+    }
+    Object.assign(updates, pricing.updates);
+  }
 
   const lastAdminError = await blockIfLastAdminLosesAccess({
     userId: id,

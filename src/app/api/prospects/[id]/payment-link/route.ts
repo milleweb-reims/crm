@@ -9,12 +9,20 @@ import {
   cancelBillingRequest,
   GoCardlessError,
 } from "@/lib/gocardless";
+import { prospectPricing } from "@/lib/pricing-service";
 import { ttcFromHt } from "@/lib/vat";
 
 /**
- * Génère le lien de paiement GoCardless du prospect (montant = quoteAmount).
+ * Génère le lien de paiement GoCardless du prospect.
+ *
+ * Le montant est le tarif de création du closer qui DÉTIENT la fiche, et non
+ * celui de l'appelant : un admin qui génère le lien d'une fiche de Moh applique
+ * le tarif de Moh.
+ *
  * Idempotent : si un lien existe déjà, il est renvoyé tel quel, sauf si
  * { regenerate: true } est passé (l'ancienne billing request est alors annulée).
+ * Un lien déjà émis porte définitivement son montant : GoCardless le fige à la
+ * création de la billing request, un changement de tarif ne l'affecte pas.
  */
 export async function POST(
   req: NextRequest,
@@ -31,12 +39,9 @@ export async function POST(
     return NextResponse.json({ error: "Prospect introuvable" }, { status: 404 });
   }
 
-  if (!prospect.quoteAmount || prospect.quoteAmount <= 0) {
-    return NextResponse.json(
-      { error: "Renseigne d'abord le montant du devis (quoteAmount)" },
-      { status: 400 }
-    );
-  }
+  // Toujours strictement positif : la résolution retombe sur le tarif par défaut
+  // plutôt que de rendre un montant inexploitable.
+  const { quoteAmount } = await prospectPricing(prospect.assignedTo);
 
   const { regenerate } = await req
     .json()
@@ -59,7 +64,7 @@ export async function POST(
       id: prospect._id.toString(),
       name: prospect.name,
       email: prospect.email || prospect.emails?.individual || prospect.emails?.contact,
-      quoteAmount: prospect.quoteAmount,
+      quoteAmount,
     });
 
     prospect.gcBillingRequestId = billingRequestId;
@@ -71,8 +76,10 @@ export async function POST(
       prospectId: prospect._id,
       userId: session.user.id,
       type: "payment",
-      content: `🔗 Lien de paiement généré (${prospect.quoteAmount.toLocaleString("fr-FR")} € HT — ${ttcFromHt(prospect.quoteAmount).toLocaleString("fr-FR")} € TTC)`,
-      metadata: { billingRequestId, amount: prospect.quoteAmount, regenerate: !!regenerate },
+      // L'activité est la seule trace durable du montant demandé : la fiche ne
+      // stocke aucun prix, et le tarif du closer peut changer ensuite.
+      content: `🔗 Lien de paiement généré (${quoteAmount.toLocaleString("fr-FR")} € HT — ${ttcFromHt(quoteAmount).toLocaleString("fr-FR")} € TTC)`,
+      metadata: { billingRequestId, amount: quoteAmount, regenerate: !!regenerate },
     });
 
     emitCrmEvent({

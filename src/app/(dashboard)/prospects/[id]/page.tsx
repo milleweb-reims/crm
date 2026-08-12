@@ -890,7 +890,7 @@ export default function ProspectDetailPage() {
           <PaymentLinkCard
             prospect={prospect}
             onUpdated={fetchData}
-            canEditQuote={isAdmin}
+            isAdmin={isAdmin}
             className="h-full"
           />
         )}

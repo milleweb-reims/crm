@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
+import { prospectPricing } from "@/lib/pricing-service";
 import { Prospect } from "@/lib/models/prospect.model";
 import { Activity } from "@/lib/models/activity.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
@@ -53,7 +54,8 @@ export async function POST(
     );
   }
 
-  const amount = formatPaymentAmount(prospect.quoteAmount);
+  const { quoteAmount } = await prospectPricing(prospect.assignedTo);
+  const amount = formatPaymentAmount(quoteAmount);
   const html = buildPaymentLinkEmail(prospect.paymentLink, amount);
 
   const sent = await sendEmail({

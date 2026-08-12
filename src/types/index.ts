@@ -38,6 +38,10 @@ export interface IUser {
   readonly role: UserRole;
   readonly avatar?: string;
   readonly isActive: boolean;
+  /** Tarif de création du site pratiqué par ce compte, en euros HT. */
+  readonly quoteAmount?: number;
+  /** Abonnement mensuel pratiqué par ce compte, en euros HT. */
+  readonly subscriptionAmount?: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -95,7 +99,12 @@ export interface IProspect {
     | null;
   readonly lockedBy: { readonly _id: string; readonly name: string } | string | null;
   readonly lockedAt: Date | null;
-  readonly quoteAmount: number | null;
+  /**
+   * Tarifs effectifs, résolus depuis le détenteur de la fiche par
+   * `GET /api/prospects/[id]`. Absent des réponses de liste, qui n'affichent
+   * aucun montant.
+   */
+  readonly pricing?: { readonly quoteAmount: number; readonly subscriptionAmount: number };
   readonly devUrl: string | null;
   readonly rdvDate: Date | null;
   readonly paidAt: Date | null;
@@ -107,7 +116,6 @@ export interface IProspect {
   readonly gcBillingRequestId: string | null;
   readonly paymentLink: string | null;
   readonly paymentLinkCreatedAt: Date | null;
-  readonly subscriptionAmount: number | null;
   readonly gcMandateBillingRequestId: string | null;
   readonly mandateLink: string | null;
   readonly mandateLinkCreatedAt: Date | null;
