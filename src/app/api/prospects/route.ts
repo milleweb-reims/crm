@@ -6,84 +6,11 @@ import { Reminder } from "@/lib/models/reminder.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
 import { withCityKey } from "@/lib/city";
-import { resolveAssignmentsByCity } from "@/lib/territory-service";
-
-/**
- * Builds a MongoDB filter for prospect queries based on search parameters and user role.
- * Applies dev role restrictions: limits to rdv/paye prospects, excludes those with devUrl
- * unless viewing the delivery pipeline. Structures search with $or across name, phone, email, city.
- *
- * @param params - Filter parameters from URL search params and session
- * @returns MongoDB filter object for find/countDocuments operations
- */
-function buildProspectFilter(params: {
-  readonly status?: string | null;
-  readonly assignedTo?: string | null;
-  readonly search?: string | null;
-  readonly city?: string | null;
-  readonly rdv?: string | null;
-  readonly paid?: string | null;
-  readonly view?: string | null;
-  readonly userRole: string;
-  readonly userId: string;
-}): Readonly<Record<string, unknown>> {
-  const filter = {
-    ...(params.status && { status: params.status }),
-    ...(params.assignedTo && { assignedTo: params.assignedTo }),
-    ...(params.rdv === "upcoming" && { rdvDate: { $gte: new Date() } }),
-    ...(params.paid === "month" && {
-      paidAt: {
-        $gte: new Date(
-          new Date().getFullYear(),
-          new Date().getMonth(),
-          1
-        ),
-      },
-    }),
-    ...(params.city && { "address.city": { $regex: params.city, $options: "i" } }),
-    ...(params.search && {
-      $or: [
-        { name: { $regex: params.search, $options: "i" } },
-        { phone: { $regex: params.search, $options: "i" } },
-        { email: { $regex: params.search, $options: "i" } },
-        { "address.city": { $regex: params.search, $options: "i" } },
-      ],
-    }),
-  };
-
-  // Un closer ne voit que ses prospects. L'attribution n'était jusqu'ici qu'une
-  // réservation : elle empêchait un autre closer de prendre la fiche, sans la
-  // masquer. Attribuer une ville n'avait donc aucun effet sur ce que le closer
-  // avait sous les yeux.
-  //
-  // La valeur est écrasée volontairement, et non fusionnée : un closer qui
-  // passerait `?assignedTo=<autre>` dans l'URL ne doit pas contourner la règle.
-  if (params.userRole === "closer") {
-    return { ...filter, assignedTo: params.userId };
-  }
-
-  if (params.userRole !== "dev") {
-    return filter;
-  }
-
-  const devFilter = { ...filter, status: { $in: ["rdv", "paye"] } };
-
-  if (params.view === "delivery") {
-    return devFilter;
-  }
-
-  const noDevUrl = { $or: [{ devUrl: null }, { devUrl: "" }] };
-
-  if (filter.$or) {
-    const { $or, ...filterWithoutOr } = devFilter;
-    return {
-      ...filterWithoutOr,
-      $and: [{ $or }, noDevUrl],
-    };
-  }
-
-  return { ...devFilter, ...noDevUrl };
-}
+import { buildProspectFilter } from "@/lib/prospect-scope";
+import {
+  closerCityKeys,
+  resolveAssignmentsByCity,
+} from "@/lib/territory-service";
 
 export async function GET(req: NextRequest) {
   const session = await getAuthSession();
@@ -95,6 +22,13 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "20");
 
+  // Un closer voit les prospects des villes de ses territoires. Seul ce rôle a
+  // une portée territoriale : inutile d'interroger la base pour les autres.
+  const territoryCityKeys =
+    session.user.role === "closer"
+      ? await closerCityKeys(session.user.id)
+      : [];
+
   const filter = buildProspectFilter({
     status: searchParams.get("status"),
     assignedTo: searchParams.get("assignedTo"),
@@ -105,6 +39,7 @@ export async function GET(req: NextRequest) {
     view: searchParams.get("view"),
     userRole: session.user.role,
     userId: session.user.id,
+    territoryCityKeys,
   });
 
   const [prospects, total] = await Promise.all([

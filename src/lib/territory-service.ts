@@ -1,6 +1,8 @@
 // Accès base pour les territoires. La logique de répartition elle-même vit
 // dans territory-balance.ts, sans dépendance à Mongoose, pour rester testable.
 
+import { isValidObjectId, Types } from "mongoose";
+
 import { emitCrmEvent } from "./events";
 import { Activity } from "./models/activity.model";
 import { Prospect } from "./models/prospect.model";
@@ -54,16 +56,46 @@ export async function activeCloserIds(closerIds: unknown[]): Promise<string[]> {
 }
 
 /**
+ * Villes (clés normalisées) des territoires où l'utilisateur est closer.
+ * C'est la portée de visibilité d'un closer : il voit les prospects de ses
+ * villes, qu'ils lui soient attribués ou non.
+ */
+export async function closerCityKeys(userId: string): Promise<string[]> {
+  if (!isValidObjectId(userId)) return [];
+
+  const territories = await Territory.find(
+    { closers: userId },
+    { cityKey: 1 }
+  ).lean();
+
+  return territories.map((territory) => territory.cityKey);
+}
+
+/**
  * Mesure la charge d'appels en attente de chaque closer.
  * Portée volontairement globale : on compte toutes villes confondues, pour
  * refléter la bande passante réelle du closer et non l'équilibre d'une ville.
  * Une seule agrégation, quel que soit le nombre de prospects à répartir.
+ *
+ * `assignedTo` est comparé à des ObjectId construits explicitement : contrairement
+ * à `find`, **une agrégation ne passe pas par le casting du schéma**. Comparé à
+ * des chaînes, le `$match` ne ramenait aucune ligne — toutes les charges étaient
+ * donc mesurées à zéro, et « attribuer au closer le moins chargé » revenait à
+ * servir le plus petit identifiant.
  */
 export async function measureLoads(closerIds: string[]): Promise<CloserLoad[]> {
   if (closerIds.length === 0) return [];
 
+  const objectIds = closerIds
+    .filter(isValidObjectId)
+    .map((closerId) => new Types.ObjectId(closerId));
+
+  if (objectIds.length === 0) {
+    return closerIds.map((closerId) => ({ closerId, load: 0 }));
+  }
+
   const rows = await Prospect.aggregate<{ _id: unknown; n: number }>([
-    { $match: { assignedTo: { $in: closerIds }, status: "prospect" } },
+    { $match: { assignedTo: { $in: objectIds }, status: "prospect" } },
     { $group: { _id: "$assignedTo", n: { $sum: 1 } } },
   ]);
 

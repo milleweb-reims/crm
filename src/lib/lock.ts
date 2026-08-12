@@ -33,9 +33,30 @@ export function getLockHolder(
 }
 
 /**
+ * Une attribution est-elle opposable ?
+ *
+ * Tant qu'une fiche est au statut « Prospect », elle n'a jamais été appelée :
+ * l'attribution n'est qu'une suggestion de répartition du territoire, et tout
+ * closer qui voit la fiche peut l'entamer — le serveur la lui attribue alors.
+ *
+ * Sans cette règle, la visibilité par territoire serait un piège : un closer
+ * ajouté sur une ville verrait tout le stock de cette ville sans pouvoir toucher
+ * une seule fiche, chacune répondant « déjà pris ».
+ *
+ * Dès que le dossier est entamé (en appel, à rappeler, RDV, lien envoyé, payé),
+ * l'attribution devient exclusive : c'est le dossier de son closer, et personne
+ * ne le lui prend.
+ */
+export function isReservationBinding(prospect: { readonly status: string }) {
+  return prospect.status !== "prospect";
+}
+
+/**
  * Fiche attribuée à un autre closer → renvoie à qui, sinon null.
- * Contrairement au verrou, l'attribution n'expire pas : seul le closer
- * attribué (ou un admin) peut prendre la fiche.
+ *
+ * Informatif, et non bloquant : l'attribution n'expire pas, mais elle n'est
+ * opposable que si le dossier est entamé (voir isReservationBinding). Un
+ * appelant qui veut savoir s'il peut prendre la fiche croise les deux.
  */
 export function getReservationHolder(
   prospect: {

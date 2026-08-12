@@ -8,6 +8,7 @@ import { emitCrmEvent } from "@/lib/events";
 import { isLockActive } from "@/lib/lock";
 import { sendEmail } from "@/lib/mailer";
 import { normalizeCity } from "@/lib/city";
+import { computeStatusChangeEffects } from "@/lib/prospect-status";
 import type { UserRole } from "@/types";
 
 interface RdvProspect {
@@ -276,85 +277,6 @@ function validateStatusTransition(options: {
   }
 
   return null;
-}
-
-/**
- * Pure: Computes status change effects (auto-assign, lock on en_appel, etc.).
- * Returns the updated body and any activity to record, or conflict error data.
- */
-function computeStatusChangeEffects(options: {
-  readonly updates: Record<string, unknown>;
-  readonly existing: ProspectDoc;
-  readonly userId: string;
-  readonly userRole: UserRole;
-}): {
-  readonly updates: Record<string, unknown>;
-  readonly activityToRecord?: {
-    readonly content: string;
-    readonly metadata: Record<string, unknown>;
-  };
-  readonly conflictError?: {
-    readonly message: string;
-    readonly assignedName: string;
-  };
-} {
-  const { updates, existing, userId, userRole } = options;
-
-  const isCloserOrAdmin = userRole === "closer" || userRole === "admin";
-  let effectsUpdate = updates;
-
-  if (existing.status === "prospect" && isCloserOrAdmin && !existing.assignedTo) {
-    effectsUpdate = { ...effectsUpdate, assignedTo: userId };
-  }
-
-  const holdsLock =
-    existing.lockedBy && existing.lockedBy._id.toString() === userId;
-  const assignedToUser =
-    existing.assignedTo && typeof existing.assignedTo === "object"
-      ? existing.assignedTo
-      : null;
-
-  if (
-    !holdsLock &&
-    assignedToUser &&
-    assignedToUser._id.toString() !== userId &&
-    userRole !== "admin"
-  ) {
-    const assignedName = assignedToUser.name || "un autre utilisateur";
-    return {
-      updates: effectsUpdate,
-      conflictError: {
-        message: `Ce prospect est déjà pris par ${assignedName}`,
-        assignedName,
-      },
-    };
-  }
-
-  if (updates.status === "en_appel") {
-    effectsUpdate = {
-      ...effectsUpdate,
-      lockedBy: userId,
-      lockedAt: new Date(),
-    };
-  }
-
-  // « À rappeler » gare la fiche : l'appel est terminé, le verrou (posé sans
-  // expiration par « en appel ») n'a plus de raison d'être.
-  if (updates.status === "a_rappeler") {
-    effectsUpdate = {
-      ...effectsUpdate,
-      lockedBy: null,
-      lockedAt: null,
-    };
-  }
-
-  return {
-    updates: effectsUpdate,
-    activityToRecord: {
-      content: `Statut changé de "${existing.status}" à "${updates.status}"`,
-      metadata: { from: existing.status, to: updates.status },
-    },
-  };
 }
 
 /**

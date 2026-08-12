@@ -3,7 +3,7 @@ import { connectDB } from "@/lib/db";
 import { Prospect } from "@/lib/models/prospect.model";
 import { getAuthSession, unauthorized } from "@/lib/api-auth";
 import { emitCrmEvent } from "@/lib/events";
-import { LOCK_TTL_MS, isLockActive } from "@/lib/lock";
+import { LOCK_TTL_MS, isLockActive, isReservationBinding } from "@/lib/lock";
 
 interface LockedProspect {
   readonly lockedBy: { readonly _id: { toString(): string }; readonly name: string } | null;
@@ -40,17 +40,24 @@ async function parseOptionalLockBody(
 }
 
 /**
- * Vérifie si le prospect est attribué à un autre utilisateur (et non admin).
+ * Vérifie si le prospect est réservé à un autre utilisateur de façon opposable.
+ *
+ * Une fiche encore au statut « Prospect » appartient au pool de sa ville : elle
+ * reste prenable même pré-attribuée à un collègue (voir isReservationBinding).
  */
 function isReservedByOther(
-  prospect: Readonly<{ assignedTo: Readonly<{ _id: { toString(): string }; name: string }> | null }>,
+  prospect: Readonly<{
+    status: string;
+    assignedTo: Readonly<{ _id: { toString(): string }; name: string }> | null;
+  }>,
   currentUserId: string,
   isAdmin: boolean
 ): boolean {
   return (
     !!prospect.assignedTo &&
     prospect.assignedTo._id.toString() !== currentUserId &&
-    !isAdmin
+    !isAdmin &&
+    isReservationBinding(prospect)
   );
 }
 

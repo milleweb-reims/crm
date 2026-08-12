@@ -44,7 +44,11 @@ import {
   type DeliveryStage,
   type ActivityType,
 } from "@/types";
-import { LOCK_HEARTBEAT_MS, getLockHolder } from "@/lib/lock";
+import {
+  LOCK_HEARTBEAT_MS,
+  getLockHolder,
+  isReservationBinding,
+} from "@/lib/lock";
 import { getDeliveryStage } from "@/lib/delivery";
 import { useRealtime } from "@/hooks/use-realtime";
 
@@ -263,6 +267,13 @@ export default function ProspectDetailPage() {
    * - Reserved to another closer: "held" (terminal, no acquisition possible)
    * - Already held by another: "held" (acquisition waits for release)
    * - Otherwise: auto-acquire lock immediately on page load
+   *
+   * La réservation n'est opposable que sur un dossier entamé
+   * (isReservationBinding). Une fiche encore au statut « Prospect » appartient au
+   * pool de sa ville : le closer qui l'ouvre la prend, même si la répartition du
+   * territoire l'avait suggérée à un collègue. C'est le pendant côté interface de
+   * la règle appliquée par POST /api/prospects/[id]/lock — sans lui, un closer
+   * ajouté sur une ville se heurterait à « déjà pris » sur tout le stock.
    */
   /* eslint-disable react-hooks/set-state-in-effect -- One-shot state-machine
      transition guarded by lockState === "init": runs once when prospect and
@@ -283,7 +294,11 @@ export default function ProspectDetailPage() {
     const prospectAssignedId =
       prospectAssigned?._id ??
       (typeof prospect.assignedTo === "string" ? prospect.assignedTo : null);
-    if (prospectAssignedId && prospectAssignedId !== session.user.id) {
+    if (
+      prospectAssignedId &&
+      prospectAssignedId !== session.user.id &&
+      isReservationBinding(prospect)
+    ) {
       setReservedBy(prospectAssigned?.name ?? "un autre utilisateur");
       setLockState("held");
       return;

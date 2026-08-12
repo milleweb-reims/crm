@@ -6,8 +6,45 @@ import { Pencil, Trash2, Star, ChevronLeft, ChevronRight, Lock, UserCheck } from
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getLockHolder, getReservationHolder } from "@/lib/lock";
+import {
+  getLockHolder,
+  getReservationHolder,
+  isReservationBinding,
+} from "@/lib/lock";
 import type { IProspect, ProspectStatus } from "@/types";
+
+/**
+ * Qui détient la fiche, et est-ce opposable.
+ *
+ * Avec la visibilité par territoire, un closer voit le stock de sa ville, dont
+ * des fiches que la répartition avait suggérées à un collègue. Les peindre en
+ * rouge « attribué à » les ferait passer pour interdites alors qu'elles sont
+ * prenables : le gris dit « suggéré », le rouge dit « pris ».
+ */
+function ReservationBadge({
+  prospect,
+  currentUserId,
+}: Readonly<{ prospect: IProspect; currentUserId?: string }>) {
+  const holder = getReservationHolder(prospect, currentUserId);
+  if (!holder) return null;
+
+  const binding = isReservationBinding(prospect);
+
+  return (
+    <Badge
+      variant={binding ? "red" : "gray"}
+      className="gap-1 flex-shrink-0"
+      title={
+        binding
+          ? `Dossier en cours de ${holder.name}`
+          : `Suggéré à ${holder.name} — libre tant que l'appel n'a pas commencé`
+      }
+    >
+      <UserCheck className="h-3 w-3" />
+      {holder.name}
+    </Badge>
+  );
+}
 
 interface ProspectTableProps {
   prospects: IProspect[];
@@ -77,9 +114,6 @@ export function ProspectTable({
             )}
             {prospects.map((prospect) => {
               const lockHolder = getLockHolder(prospect, session?.user?.id);
-              const reservationHolder = lockHolder
-                ? null
-                : getReservationHolder(prospect, session?.user?.id);
               return (
               <tr
                 key={prospect._id}
@@ -99,15 +133,11 @@ export function ProspectTable({
                         {lockHolder.name}
                       </Badge>
                     )}
-                    {reservationHolder && (
-                      <Badge
-                        variant="red"
-                        className="gap-1 flex-shrink-0"
-                        title={`Prospect attribué à ${reservationHolder.name}`}
-                      >
-                        <UserCheck className="h-3 w-3" />
-                        {reservationHolder.name}
-                      </Badge>
+                    {!lockHolder && (
+                      <ReservationBadge
+                        prospect={prospect}
+                        currentUserId={session?.user?.id}
+                      />
                     )}
                   </span>
                   {prospect.websiteRoot && (
@@ -178,9 +208,6 @@ export function ProspectTable({
         )}
         {prospects.map((prospect) => {
           const lockHolder = getLockHolder(prospect, session?.user?.id);
-          const reservationHolder = lockHolder
-            ? null
-            : getReservationHolder(prospect, session?.user?.id);
           return (
           <div
             key={prospect._id}
@@ -197,11 +224,11 @@ export function ProspectTable({
                       {lockHolder.name}
                     </Badge>
                   )}
-                  {reservationHolder && (
-                    <Badge variant="red" className="gap-1 flex-shrink-0">
-                      <UserCheck className="h-3 w-3" />
-                      {reservationHolder.name}
-                    </Badge>
+                  {!lockHolder && (
+                    <ReservationBadge
+                      prospect={prospect}
+                      currentUserId={session?.user?.id}
+                    />
                   )}
                 </span>
                 {prospect.address?.city && (
