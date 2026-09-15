@@ -1,4 +1,5 @@
 import { Trophy } from "lucide-react";
+import { hasSales } from "@/lib/leaderboard";
 import { cn } from "@/lib/utils";
 
 export interface LeaderboardEntry {
@@ -24,17 +25,14 @@ export function ClosersLeaderboard({
   showCa = false,
   currentUserId,
 }: ClosersLeaderboardProps) {
+  if (!hasSales(entries)) return null;
+
   return (
     <div className="rounded-xl border border-border bg-background p-6 shadow-sm">
       <h3 className="text-sm font-medium text-muted-foreground mb-4">
         Classement des closers (ce mois)
       </h3>
-      {entries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Aucune vente ni RDV ce mois-ci
-        </p>
-      ) : (
-        <ul className="space-y-2">
+      <ul className="space-y-2">
           {entries.map((entry, i) => (
             <li
               key={entry.userId}
@@ -79,7 +77,6 @@ export function ClosersLeaderboard({
             </li>
           ))}
         </ul>
-      )}
     </div>
   );
 }
