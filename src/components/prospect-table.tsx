@@ -6,42 +6,33 @@ import { Pencil, Trash2, Star, ChevronLeft, ChevronRight, Lock, UserCheck } from
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  getLockHolder,
-  getReservationHolder,
-  isReservationBinding,
-} from "@/lib/lock";
+import { getBindingReservationHolder, getLockHolder } from "@/lib/lock";
 import type { IProspect, ProspectStatus } from "@/types";
 
 /**
- * Qui détient la fiche, et est-ce opposable.
+ * Dossier entamé par un collègue.
  *
  * Avec la visibilité par territoire, un closer voit le stock de sa ville, dont
- * des fiches que la répartition avait suggérées à un collègue. Les peindre en
- * rouge « attribué à » les ferait passer pour interdites alors qu'elles sont
- * prenables : le gris dit « suggéré », le rouge dit « pris ».
+ * des fiches que la répartition avait suggérées à un collègue. Ces suggestions
+ * ne sont pas affichées : un nom sur chaque ligne ferait croire que tout est
+ * déjà pris, alors qu'une fiche encore au statut « Prospect » est libre. Seul
+ * un dossier entamé, donc exclusif, porte le nom de son closer.
  */
 function ReservationBadge({
   prospect,
   currentUserId,
 }: Readonly<{ prospect: IProspect; currentUserId?: string }>) {
-  const holder = getReservationHolder(prospect, currentUserId);
+  const holder = getBindingReservationHolder(prospect, currentUserId);
   if (!holder) return null;
-
-  const binding = isReservationBinding(prospect);
 
   return (
     <Badge
-      variant={binding ? "red" : "gray"}
+      variant="red"
       className="gap-1 flex-shrink-0"
-      title={
-        binding
-          ? `Dossier en cours de ${holder.name}`
-          : `Suggéré à ${holder.name} — libre tant que l'appel n'a pas commencé`
-      }
+      title={`Dossier en cours de ${holder.name} — vous ne pouvez pas le prendre`}
     >
       <UserCheck className="h-3 w-3" />
-      {holder.name}
+      Dossier de {holder.name}
     </Badge>
   );
 }

@@ -73,3 +73,19 @@ export function getReservationHolder(
   }
   return assignee._id === currentUserId ? null : assignee;
 }
+
+/**
+ * Closer d'un dossier entamé par quelqu'un d'autre → renvoie qui, sinon null.
+ *
+ * Croise getReservationHolder et isReservationBinding pour l'affichage : une
+ * simple suggestion de répartition n'est pas signalée, sinon un closer qui voit
+ * le stock de sa ville croit que tout appartient déjà à un collègue.
+ */
+export function getBindingReservationHolder(
+  prospect: Parameters<typeof getReservationHolder>[0] &
+    Parameters<typeof isReservationBinding>[0],
+  currentUserId?: string
+) {
+  if (!isReservationBinding(prospect)) return null;
+  return getReservationHolder(prospect, currentUserId);
+}
