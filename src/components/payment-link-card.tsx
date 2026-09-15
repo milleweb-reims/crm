@@ -7,12 +7,15 @@ import {
   CreditCard,
   Download,
   FileText,
+  Pencil,
   RefreshCw,
   Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { SubscriptionMandateSection } from "@/components/subscription-mandate-section";
+import { MINIMUM_QUOTE_AMOUNT, validateQuoteAmount } from "@/lib/pricing";
 import { ttcFromHt } from "@/lib/vat";
 import type { IProspect } from "@/types";
 
@@ -21,19 +24,31 @@ interface PaymentLinkCardProps {
   readonly onUpdated: () => void;
   /** Le rattrapage de facture Qonto est réservé à l'admin. */
   readonly isAdmin: boolean;
+  /** Détenteur de la fiche ou admin : peut fixer le prix tant qu'elle n'est pas payée. */
+  readonly canEditPrice: boolean;
   readonly className?: string;
 }
 
 /**
- * Carte « Devis & paiement » : montant appliqué au client, puis génération /
- * copie / envoi du lien de paiement GoCardless correspondant.
+ * Carte « Devis & paiement » : prix de la fiche, puis génération / copie /
+ * envoi du lien de paiement GoCardless correspondant.
  *
- * Le montant n'est pas modifiable ici : c'est le tarif de création du closer qui
- * détient la fiche, réglé dans Paramètres → Utilisateurs. Il est résolu côté
- * serveur et servi dans `prospect.pricing`.
+ * Le prix se fixe ici, par le closer qui détient la fiche, à 1 000 € HT minimum.
+ * Tout ce qui dépasse ce plancher lui est reversé. Le prix effectif est résolu
+ * côté serveur et servi dans `prospect.pricing`.
  */
-export function PaymentLinkCard({ prospect, onUpdated, isAdmin, className }: PaymentLinkCardProps) {
+export function PaymentLinkCard({
+  prospect,
+  onUpdated,
+  isAdmin,
+  canEditPrice,
+  className,
+}: PaymentLinkCardProps) {
   const [generating, setGenerating] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState("");
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [sending, setSending] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -45,6 +60,49 @@ export function PaymentLinkCard({ prospect, onUpdated, isAdmin, className }: Pay
   // Résolu par le serveur depuis le détenteur de la fiche. Absent seulement le
   // temps du premier chargement.
   const quoteAmount = prospect.pricing?.quoteAmount ?? null;
+  const isPaid = prospect.status === "paye";
+  const closerShare =
+    quoteAmount !== null ? Math.max(0, quoteAmount - MINIMUM_QUOTE_AMOUNT) : 0;
+
+  function startEditPrice() {
+    setPriceInput(String(quoteAmount ?? MINIMUM_QUOTE_AMOUNT));
+    setPriceError(null);
+    setEditingPrice(true);
+  }
+
+  /**
+   * Enregistre le prix de la fiche. Converti en nombre ici : l'API refuse une
+   * chaîne, et c'est voulu. Le plancher est vérifié avant l'appel pour un
+   * retour immédiat, puis revérifié par le serveur.
+   */
+  async function handleSavePrice() {
+    const checked = validateQuoteAmount(Number(priceInput.replace(",", ".")));
+    if ("error" in checked) {
+      setPriceError(checked.error);
+      return;
+    }
+
+    setSavingPrice(true);
+    setPriceError(null);
+    try {
+      const res = await fetch(`/api/prospects/${prospect._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteAmount: checked.amount }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPriceError(data.error || "Échec de l'enregistrement du prix");
+        return;
+      }
+      setEditingPrice(false);
+      onUpdated();
+    } catch {
+      setPriceError("Erreur réseau — réessaie");
+    } finally {
+      setSavingPrice(false);
+    }
+  }
 
   async function handleGenerate(regenerate = false) {
     setGenerating(true);
@@ -126,19 +184,84 @@ export function PaymentLinkCard({ prospect, onUpdated, isAdmin, className }: Pay
         <CreditCard className="h-4 w-4 text-muted-foreground" />
       </div>
       <CardContent className="mt-4 space-y-4">
-        {/* Tarif appliqué — réglé sur le compte du closer, pas ici */}
+        {/* Prix de la fiche : fixé par le closer qui la détient, 1 000 € HT minimum */}
         <div>
-          <p className="text-xs text-muted-foreground">Montant du devis</p>
-          <p className="text-3xl font-semibold text-foreground">
-            {quoteAmount !== null
-              ? `${quoteAmount.toLocaleString("fr-FR")} € HT`
-              : "—"}
-          </p>
-          {quoteAmount !== null && (
-            <p className="text-xs text-muted-foreground">
-              soit {ttcFromHt(quoteAmount).toLocaleString("fr-FR")} € TTC payés
-              par le client — tarif du closer sur cette fiche
-            </p>
+          <p className="text-xs text-muted-foreground">Prix du site</p>
+          {editingPrice ? (
+            <div className="mt-1 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="number"
+                  min={MINIMUM_QUOTE_AMOUNT}
+                  step="50"
+                  value={priceInput}
+                  onChange={(e) => setPriceInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSavePrice();
+                    if (e.key === "Escape") setEditingPrice(false);
+                  }}
+                  disabled={savingPrice}
+                  autoFocus
+                  className="w-32"
+                  data-test="quote-amount-input"
+                />
+                <span className="text-sm text-muted-foreground">€ HT</span>
+                <Button
+                  size="sm"
+                  onClick={handleSavePrice}
+                  disabled={savingPrice}
+                  data-test="quote-amount-save"
+                >
+                  {savingPrice ? "Enregistrement…" : "Enregistrer"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditingPrice(false)}
+                  disabled={savingPrice}
+                >
+                  Annuler
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {MINIMUM_QUOTE_AMOUNT.toLocaleString("fr-FR")} € HT minimum.
+                Tout ce qui dépasse revient au closer.
+                {prospect.paymentLink &&
+                  " Le lien déjà généré garde son montant : régénère-le après."}
+              </p>
+              {priceError && <p className="text-xs text-red-600">{priceError}</p>}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <p className="text-3xl font-semibold text-foreground">
+                  {quoteAmount !== null
+                    ? `${quoteAmount.toLocaleString("fr-FR")} € HT`
+                    : "—"}
+                </p>
+                {canEditPrice && !isPaid && quoteAmount !== null && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title="Modifier le prix"
+                    onClick={startEditPrice}
+                    data-test="edit-quote-amount"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {quoteAmount !== null && (
+                <p className="text-xs text-muted-foreground">
+                  soit {ttcFromHt(quoteAmount).toLocaleString("fr-FR")} € TTC payés
+                  par le client
+                  {isPaid && prospect.closerCommission != null
+                    ? ` — ${prospect.closerCommission.toLocaleString("fr-FR")} € reversés au closer`
+                    : ` — ${closerShare.toLocaleString("fr-FR")} € pour le closer`}
+                </p>
+              )}
+            </>
           )}
         </div>
 

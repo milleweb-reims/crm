@@ -41,9 +41,7 @@ export async function POST(
   }
 
   // Tarif du closer qui détient la fiche, toujours strictement positif.
-  const { subscriptionAmount: amountHt } = await prospectPricing(
-    prospect.assignedTo
-  );
+  const { subscriptionAmount: amountHt } = await prospectPricing(prospect);
 
   const { regenerate } = await req
     .json()

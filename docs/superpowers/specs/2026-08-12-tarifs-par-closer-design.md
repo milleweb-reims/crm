@@ -1,7 +1,7 @@
 # Tarifs de création et d'abonnement par closer — Design
 
 **Date** : 2026-08-12
-**Statut** : validé
+**Statut** : remplacé le 2026-09-15 par `2026-09-15-prix-par-fiche-et-remuneration-design.md` (prix fixé par fiche, plancher 1 000 € HT, rémunération du closer)
 
 ## Objectif
 

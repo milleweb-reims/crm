@@ -2,12 +2,16 @@ import { Types } from "mongoose";
 import { describe, expect, it } from "vitest";
 
 import {
+  closerCommission,
   holderIdOf,
   pickPricingUpdates,
+  quoteAmountUpdate,
   resolveProspectPricing,
+  validateQuoteAmount,
 } from "./pricing";
 
 const MOH = "6a5dc8ae6466fb9a3bcc088d";
+const PAUL = "6a5dc8ae6466fb9a3bcc0999";
 
 /**
  * Lecture de compte factice — une vraie fonction, pas un mock : les tests
@@ -55,91 +59,237 @@ describe("holderIdOf", () => {
   });
 });
 
-describe("resolveProspectPricing", () => {
-  it("applique les tarifs du détenteur de la fiche", async () => {
-    const db = holders({ [MOH]: { quoteAmount: 690, subscriptionAmount: 39 } });
+describe("validateQuoteAmount", () => {
+  it("accepte le minimum de 1 000 € HT", () => {
+    expect(validateQuoteAmount(1000)).toEqual({ amount: 1000 });
+  });
 
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 690,
-      subscriptionAmount: 39,
+  it("accepte tout montant au-dessus du minimum", () => {
+    expect(validateQuoteAmount(2000)).toEqual({ amount: 2000 });
+    expect(validateQuoteAmount(1499.5)).toEqual({ amount: 1499.5 });
+  });
+
+  it("refuse un prix sous le minimum", () => {
+    expect(validateQuoteAmount(999.99)).toEqual({
+      error: "Prix invalide : 1 000 € HT minimum",
+    });
+    expect(validateQuoteAmount(0)).toEqual({
+      error: "Prix invalide : 1 000 € HT minimum",
     });
   });
 
-  it("retombe sur les tarifs par défaut si la fiche n'est attribuée à personne", async () => {
+  it("refuse une valeur non numérique", () => {
+    // Un formulaire qui n'a pas converti sa saisie ne doit pas passer.
+    expect(validateQuoteAmount("2000")).toEqual({
+      error: "Prix invalide : 1 000 € HT minimum",
+    });
+    expect(validateQuoteAmount(Number.NaN)).toEqual({
+      error: "Prix invalide : 1 000 € HT minimum",
+    });
+    expect(validateQuoteAmount(null)).toEqual({
+      error: "Prix invalide : 1 000 € HT minimum",
+    });
+  });
+});
+
+describe("resolveProspectPricing — prix de création", () => {
+  it("applique le prix posé sur la fiche", async () => {
+    const db = holders({ [MOH]: { subscriptionAmount: 39 } });
+
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: 2000, assignedTo: MOH },
+      db.find
+    );
+
+    expect(pricing.quoteAmount).toBe(2000);
+  });
+
+  it("retombe sur le minimum quand la fiche n'a pas de prix", async () => {
     const db = holders({});
 
-    expect(await resolveProspectPricing(null, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+    const pricing = await resolveProspectPricing(
+      { assignedTo: null },
+      db.find
+    );
+
+    expect(pricing.quoteAmount).toBe(1000);
+  });
+
+  it("retombe sur le minimum quand la fiche porte un prix d'avant la règle", async () => {
+    // Un document antérieur peut encore porter 500 : jamais sous 1 000 vers GoCardless.
+    const db = holders({});
+
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: 500, assignedTo: null },
+      db.find
+    );
+
+    expect(pricing.quoteAmount).toBe(1000);
+  });
+
+  it("retombe sur le minimum quand le prix n'est pas numérique", async () => {
+    const db = holders({});
+
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: "2000", assignedTo: null },
+      db.find
+    );
+
+    expect(pricing.quoteAmount).toBe(1000);
+  });
+});
+
+describe("resolveProspectPricing — abonnement", () => {
+  it("applique l'abonnement du détenteur de la fiche", async () => {
+    const db = holders({ [MOH]: { subscriptionAmount: 39 } });
+
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: 1000, assignedTo: MOH },
+      db.find
+    );
+
+    expect(pricing.subscriptionAmount).toBe(39);
+  });
+
+  it("retombe sur l'abonnement par défaut si la fiche est libre", async () => {
+    const db = holders({});
+
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: 1000, assignedTo: null },
+      db.find
+    );
+
+    expect(pricing.subscriptionAmount).toBe(29);
   });
 
   it("ne lit aucun compte quand la fiche est libre", async () => {
     const db = holders({});
 
-    await resolveProspectPricing(null, db.find);
+    await resolveProspectPricing({ quoteAmount: 1000, assignedTo: null }, db.find);
 
     expect(db.calls).toEqual([]);
   });
 
-  it("retombe sur les tarifs par défaut si le compte a disparu", async () => {
+  it("retombe sur l'abonnement par défaut si le compte a disparu", async () => {
     const db = holders({});
 
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+    const pricing = await resolveProspectPricing(
+      { quoteAmount: 1000, assignedTo: MOH },
+      db.find
+    );
+
+    expect(pricing.subscriptionAmount).toBe(29);
+  });
+
+  it("refuse un abonnement à zéro ou négatif", async () => {
+    // Un montant nul transmis à GoCardless serait un prélèvement vide.
+    const zero = holders({ [MOH]: { subscriptionAmount: 0 } });
+    const negative = holders({ [MOH]: { subscriptionAmount: -5 } });
+
+    expect(
+      (await resolveProspectPricing({ assignedTo: MOH }, zero.find))
+        .subscriptionAmount
+    ).toBe(29);
+    expect(
+      (await resolveProspectPricing({ assignedTo: MOH }, negative.find))
+        .subscriptionAmount
+    ).toBe(29);
+  });
+
+  it("refuse un abonnement non numérique", async () => {
+    const db = holders({ [MOH]: { subscriptionAmount: "39" } });
+
+    const pricing = await resolveProspectPricing({ assignedTo: MOH }, db.find);
+
+    expect(pricing.subscriptionAmount).toBe(29);
   });
 });
 
-describe("resolveProspectPricing — tarifs inexploitables", () => {
-  it("retombe sur les défauts quand le compte n'a aucun tarif", async () => {
-    const db = holders({ [MOH]: {} });
-
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+describe("closerCommission", () => {
+  it("reverse au closer tout ce qui dépasse 1 000 € HT", () => {
+    expect(closerCommission(2000)).toBe(1000);
+    expect(closerCommission(1500)).toBe(500);
   });
 
-  it("refuse un tarif à zéro", async () => {
-    // Un montant nul transmis à GoCardless serait un prélèvement vide.
-    const db = holders({ [MOH]: { quoteAmount: 0, subscriptionAmount: 0 } });
-
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+  it("vaut zéro sur une vente au minimum", () => {
+    expect(closerCommission(1000)).toBe(0);
   });
 
-  it("refuse un tarif négatif", async () => {
-    const db = holders({ [MOH]: { quoteAmount: -100, subscriptionAmount: -5 } });
-
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+  it("ne descend jamais sous zéro", () => {
+    // Une vente d'avant la règle (500 € HT) ne crée pas de dette.
+    expect(closerCommission(500)).toBe(0);
   });
 
-  it("refuse un tarif non numérique", async () => {
-    const db = holders({
-      [MOH]: { quoteAmount: "690", subscriptionAmount: null },
-    });
+  it("arrondit au centime", () => {
+    expect(closerCommission(1234.567)).toBe(234.57);
+  });
+});
 
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 500,
-      subscriptionAmount: 29,
-    });
+describe("quoteAmountUpdate", () => {
+  const admin = { id: PAUL, role: "admin" } as const;
+  const moh = { id: MOH, role: "closer" } as const;
+  const paul = { id: PAUL, role: "closer" } as const;
+  const fiche = { status: "rdv", assignedTo: MOH } as const;
+
+  it("ne touche à rien quand aucun prix n'est envoyé", () => {
+    expect(
+      quoteAmountUpdate({ body: { name: "Boulangerie" }, existing: fiche, user: paul })
+    ).toEqual({ updates: { name: "Boulangerie" } });
   });
 
-  it("traite les deux tarifs séparément", async () => {
-    // Création configurée, abonnement laissé vide : seul le second retombe.
-    const db = holders({ [MOH]: { quoteAmount: 690 } });
+  it("laisse le détenteur fixer le prix de sa fiche", () => {
+    expect(
+      quoteAmountUpdate({ body: { quoteAmount: 2000 }, existing: fiche, user: moh })
+    ).toEqual({ updates: { quoteAmount: 2000 } });
+  });
 
-    expect(await resolveProspectPricing(MOH, db.find)).toEqual({
-      quoteAmount: 690,
-      subscriptionAmount: 29,
-    });
+  it("laisse un admin fixer le prix de n'importe quelle fiche", () => {
+    expect(
+      quoteAmountUpdate({ body: { quoteAmount: 2000 }, existing: fiche, user: admin })
+    ).toEqual({ updates: { quoteAmount: 2000 } });
+  });
+
+  it("refuse à un closer le prix d'une fiche qu'il ne détient pas", () => {
+    expect(
+      quoteAmountUpdate({ body: { quoteAmount: 2000 }, existing: fiche, user: paul })
+    ).toEqual({ error: "Seul le closer qui détient la fiche fixe son prix", status: 403 });
+  });
+
+  it("accepte le prix d'une fiche libre posé par un closer", () => {
+    // Le statut « en appel » attribue la fiche à qui la prend : le prix suit.
+    expect(
+      quoteAmountUpdate({
+        body: { quoteAmount: 2000 },
+        existing: { status: "prospect", assignedTo: null },
+        user: paul,
+      })
+    ).toEqual({ updates: { quoteAmount: 2000 } });
+  });
+
+  it("refuse de changer le prix d'une fiche déjà payée", () => {
+    expect(
+      quoteAmountUpdate({
+        body: { quoteAmount: 2000 },
+        existing: { status: "paye", assignedTo: MOH },
+        user: admin,
+      })
+    ).toEqual({ error: "Fiche payée : le prix ne peut plus être modifié", status: 403 });
+  });
+
+  it("refuse un prix sous le minimum", () => {
+    expect(
+      quoteAmountUpdate({ body: { quoteAmount: 800 }, existing: fiche, user: moh })
+    ).toEqual({ error: "Prix invalide : 1 000 € HT minimum", status: 400 });
+  });
+
+  it("lit le détenteur sous sa forme peuplée", () => {
+    expect(
+      quoteAmountUpdate({
+        body: { quoteAmount: 2000 },
+        existing: { status: "rdv", assignedTo: { _id: MOH, name: "Moh" } },
+        user: moh,
+      })
+    ).toEqual({ updates: { quoteAmount: 2000 } });
   });
 });
 
@@ -148,45 +298,38 @@ describe("pickPricingUpdates", () => {
     expect(pickPricingUpdates({ name: "Moh" })).toEqual({ updates: {} });
   });
 
-  it("retient un tarif de création valide", () => {
-    expect(pickPricingUpdates({ quoteAmount: 690 })).toEqual({
-      updates: { quoteAmount: 690 },
+  it("retient un abonnement valide", () => {
+    expect(pickPricingUpdates({ subscriptionAmount: 39 })).toEqual({
+      updates: { subscriptionAmount: 39 },
     });
   });
 
-  it("retient les deux tarifs", () => {
+  it("ignore le prix de création, qui n'est plus un tarif de compte", () => {
     expect(
-      pickPricingUpdates({ quoteAmount: 690, subscriptionAmount: 39 })
-    ).toEqual({ updates: { quoteAmount: 690, subscriptionAmount: 39 } });
+      pickPricingUpdates({ quoteAmount: 2000, subscriptionAmount: 39 })
+    ).toEqual({ updates: { subscriptionAmount: 39 } });
   });
 
   it("ignore les champs qui ne sont pas des tarifs", () => {
     expect(
-      pickPricingUpdates({ quoteAmount: 690, role: "admin", isActive: false })
-    ).toEqual({ updates: { quoteAmount: 690 } });
+      pickPricingUpdates({ subscriptionAmount: 39, role: "admin" })
+    ).toEqual({ updates: { subscriptionAmount: 39 } });
   });
 
-  it("refuse un tarif à zéro", () => {
-    expect(pickPricingUpdates({ quoteAmount: 0 })).toEqual({
+  it("refuse un abonnement à zéro ou négatif", () => {
+    expect(pickPricingUpdates({ subscriptionAmount: 0 })).toEqual({
       error: "Montant invalide : nombre strictement positif attendu",
     });
-  });
-
-  it("refuse un tarif négatif", () => {
     expect(pickPricingUpdates({ subscriptionAmount: -5 })).toEqual({
       error: "Montant invalide : nombre strictement positif attendu",
     });
   });
 
-  it("refuse un tarif envoyé en chaîne", () => {
-    // Un formulaire qui n'a pas converti sa saisie ne doit pas passer.
-    expect(pickPricingUpdates({ quoteAmount: "690" })).toEqual({
+  it("refuse un abonnement envoyé en chaîne ou non fini", () => {
+    expect(pickPricingUpdates({ subscriptionAmount: "39" })).toEqual({
       error: "Montant invalide : nombre strictement positif attendu",
     });
-  });
-
-  it("refuse un tarif non fini", () => {
-    expect(pickPricingUpdates({ quoteAmount: Number.NaN })).toEqual({
+    expect(pickPricingUpdates({ subscriptionAmount: Number.NaN })).toEqual({
       error: "Montant invalide : nombre strictement positif attendu",
     });
   });

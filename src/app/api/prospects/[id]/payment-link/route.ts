@@ -15,9 +15,8 @@ import { ttcFromHt } from "@/lib/vat";
 /**
  * Génère le lien de paiement GoCardless du prospect.
  *
- * Le montant est le tarif de création du closer qui DÉTIENT la fiche, et non
- * celui de l'appelant : un admin qui génère le lien d'une fiche de Moh applique
- * le tarif de Moh.
+ * Le montant est le prix fixé sur la fiche par le closer qui la détient
+ * (plancher : 1 000 € HT), et non un tarif de l'appelant.
  *
  * Idempotent : si un lien existe déjà, il est renvoyé tel quel, sauf si
  * { regenerate: true } est passé (l'ancienne billing request est alors annulée).
@@ -39,9 +38,9 @@ export async function POST(
     return NextResponse.json({ error: "Prospect introuvable" }, { status: 404 });
   }
 
-  // Toujours strictement positif : la résolution retombe sur le tarif par défaut
-  // plutôt que de rendre un montant inexploitable.
-  const { quoteAmount } = await prospectPricing(prospect.assignedTo);
+  // Jamais sous le plancher : la résolution y ramène un prix absent ou d'avant
+  // la règle plutôt que de rendre un montant inexploitable.
+  const { quoteAmount } = await prospectPricing(prospect);
 
   const { regenerate } = await req
     .json()
@@ -76,8 +75,8 @@ export async function POST(
       prospectId: prospect._id,
       userId: session.user.id,
       type: "payment",
-      // L'activité est la seule trace durable du montant demandé : la fiche ne
-      // stocke aucun prix, et le tarif du closer peut changer ensuite.
+      // Trace du montant demandé à cet instant : le prix de la fiche peut encore
+      // être modifié ensuite, le lien émis conserve celui-ci.
       content: `🔗 Lien de paiement généré (${quoteAmount.toLocaleString("fr-FR")} € HT — ${ttcFromHt(quoteAmount).toLocaleString("fr-FR")} € TTC)`,
       metadata: { billingRequestId, amount: quoteAmount, regenerate: !!regenerate },
     });

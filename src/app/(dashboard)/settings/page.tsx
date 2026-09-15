@@ -26,10 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DEFAULT_QUOTE_AMOUNT,
-  DEFAULT_SUBSCRIPTION_AMOUNT,
-} from "@/lib/pricing";
+import { DEFAULT_SUBSCRIPTION_AMOUNT } from "@/lib/pricing";
 import type { IUser, UserRole } from "@/types";
 
 const roleConfig: Record<UserRole, { label: string; icon: React.ElementType; color: "violet" | "blue" | "orange" }> = {
@@ -88,9 +85,9 @@ export default function SettingsPage() {
   // autre compte doit être ignorée.
   const pendingImpactFor = useRef<string | null>(null);
 
-  // Tarifs d'un compte : création et abonnement, en euros HT
+  // Abonnement mensuel d'un compte, en euros HT. Le prix de création, lui, se
+  // fixe sur chaque fiche par le closer qui la détient.
   const [pricingTarget, setPricingTarget] = useState<IUser | null>(null);
-  const [pricingQuote, setPricingQuote] = useState("");
   const [pricingSubscription, setPricingSubscription] = useState("");
   const [savingPricing, setSavingPricing] = useState(false);
   const [pricingError, setPricingError] = useState("");
@@ -193,7 +190,6 @@ export default function SettingsPage() {
 
   function openPricingModal(user: IUser) {
     setPricingTarget(user);
-    setPricingQuote(String(user.quoteAmount ?? DEFAULT_QUOTE_AMOUNT));
     setPricingSubscription(
       String(user.subscriptionAmount ?? DEFAULT_SUBSCRIPTION_AMOUNT)
     );
@@ -201,18 +197,17 @@ export default function SettingsPage() {
   }
 
   /**
-   * Enregistre les tarifs du compte. Les montants sont convertis en nombre ici :
+   * Enregistre l'abonnement du compte. Le montant est converti en nombre ici :
    * l'API refuse une chaîne, et c'est voulu — un formulaire qui n'a pas converti
    * sa saisie ne doit pas écrire un prix.
    */
   async function handleSavePricing() {
     if (!pricingTarget) return;
 
-    const quoteAmount = Number(pricingQuote.replace(",", "."));
     const subscriptionAmount = Number(pricingSubscription.replace(",", "."));
 
-    if (!(quoteAmount > 0) || !(subscriptionAmount > 0)) {
-      setPricingError("Les deux montants doivent être strictement positifs");
+    if (!(subscriptionAmount > 0)) {
+      setPricingError("Le montant doit être strictement positif");
       return;
     }
 
@@ -222,14 +217,14 @@ export default function SettingsPage() {
     const res = await fetch(`/api/users/${pricingTarget._id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quoteAmount, subscriptionAmount }),
+      body: JSON.stringify({ subscriptionAmount }),
     });
 
     setSavingPricing(false);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setPricingError(data.error || "Échec de l'enregistrement des tarifs");
+      setPricingError(data.error || "Échec de l'enregistrement de l'abonnement");
       return;
     }
 
@@ -405,7 +400,7 @@ export default function SettingsPage() {
                           Statut
                         </th>
                         <th className="text-left py-2 font-medium text-muted-foreground hidden md:table-cell">
-                          Tarifs
+                          Abonnement
                         </th>
                         <th className="text-right py-2 font-medium text-muted-foreground">
                           Actions
@@ -431,21 +426,19 @@ export default function SettingsPage() {
                               </Badge>
                             </td>
                             <td className="py-3 hidden md:table-cell tabular-nums text-muted-foreground">
-                              {(user.quoteAmount ?? DEFAULT_QUOTE_AMOUNT).toLocaleString("fr-FR")}
-                              {" € / "}
                               {(user.subscriptionAmount ?? DEFAULT_SUBSCRIPTION_AMOUNT).toLocaleString("fr-FR")}
-                              {" €"}
+                              {" € / mois"}
                             </td>
                             <td className="py-3 text-right">
                               <div className="flex items-center justify-end gap-1">
-                                {/* Tarifs : y compris sur son propre compte, un
+                                {/* Abonnement : y compris sur son propre compte, un
                                     admin pouvant lui aussi détenir une fiche. */}
                                 {actingAsSelf && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8"
-                                    title={`Tarifs de ${user.name} — création et abonnement`}
+                                    title={`Abonnement mensuel de ${user.name}`}
                                     onClick={() => openPricingModal(user)}
                                     data-test={`edit-pricing-${user._id}`}
                                   >
@@ -545,7 +538,7 @@ export default function SettingsPage() {
         </Card>
       </div>
 
-      {/* Tarifs du compte : appliqués à toutes les fiches qu'il détient */}
+      {/* Abonnement du compte : appliqué à toutes les fiches qu'il détient */}
       <Dialog
         open={pricingTarget !== null}
         onOpenChange={(open) => {
@@ -556,35 +549,17 @@ export default function SettingsPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Euro className="h-5 w-5 text-muted-foreground" />
-              Tarifs de {pricingTarget?.name}
+              Abonnement de {pricingTarget?.name}
             </DialogTitle>
             <DialogDescription>
-              Ces montants s&apos;appliquent à toutes les fiches que ce compte
-              détient. Un lien de paiement ou un abonnement déjà généré conserve
-              son montant d&apos;origine — GoCardless le fige à la création.
+              Ce montant s&apos;applique à toutes les fiches que ce compte
+              détient. Un mandat ou un abonnement déjà généré conserve son
+              montant d&apos;origine, GoCardless le fige à la création. Le prix
+              de création du site se fixe sur chaque fiche.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="pricing-quote"
-                className="block text-sm font-medium text-foreground mb-1.5"
-              >
-                Création du site (€ HT)
-              </label>
-              <Input
-                id="pricing-quote"
-                type="number"
-                min="1"
-                step="50"
-                value={pricingQuote}
-                onChange={(e) => setPricingQuote(e.target.value)}
-                disabled={savingPricing}
-                data-test="pricing-quote"
-              />
-            </div>
-
             <div>
               <label
                 htmlFor="pricing-subscription"

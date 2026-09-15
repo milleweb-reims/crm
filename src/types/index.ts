@@ -38,8 +38,6 @@ export interface IUser {
   readonly role: UserRole;
   readonly avatar?: string;
   readonly isActive: boolean;
-  /** Tarif de création du site pratiqué par ce compte, en euros HT. */
-  readonly quoteAmount?: number;
   /** Abonnement mensuel pratiqué par ce compte, en euros HT. */
   readonly subscriptionAmount?: number;
   readonly createdAt: Date;
@@ -99,16 +97,22 @@ export interface IProspect {
     | null;
   readonly lockedBy: { readonly _id: string; readonly name: string } | string | null;
   readonly lockedAt: Date | null;
+  /** Prix de création du site, en euros HT, fixé par le closer qui détient la fiche. */
+  readonly quoteAmount?: number;
   /**
-   * Tarifs effectifs, résolus depuis le détenteur de la fiche par
-   * `GET /api/prospects/[id]`. Absent des réponses de liste, qui n'affichent
-   * aucun montant.
+   * Prix effectifs (prix de la fiche ramené au plancher si besoin, abonnement
+   * du détenteur), résolus par `GET /api/prospects/[id]`. Absent des réponses
+   * de liste, qui n'affichent aucun montant.
    */
   readonly pricing?: { readonly quoteAmount: number; readonly subscriptionAmount: number };
   readonly devUrl: string | null;
   readonly rdvDate: Date | null;
   readonly paidAt: Date | null;
   readonly paidAmount: number | null;
+  /** HT du montant prélevé, figé à la réception du paiement. */
+  readonly paidAmountHt?: number | null;
+  /** Part du closer sur cette vente, figée à la réception du paiement. */
+  readonly closerCommission?: number | null;
   readonly gcPaymentId: string | null;
   readonly qontoInvoiceId: string | null;
   readonly qontoInvoiceNumber: string | null;

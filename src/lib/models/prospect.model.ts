@@ -96,10 +96,10 @@ const prospectSchema = new Schema(
       default: null,
     },
     lockedAt: { type: Date, default: null },
-    // Aucun montant sur la fiche : les tarifs de création et d'abonnement
-    // appartiennent au compte qui la détient (voir pricing.ts). Les documents
-    // antérieurs peuvent encore porter quoteAmount / subscriptionAmount ; plus
-    // rien ne les lit.
+    // Prix de création du site, en euros HT, fixé par le closer qui détient la
+    // fiche — jamais sous le plancher (voir pricing.ts). L'abonnement mensuel,
+    // lui, reste un tarif du compte détenteur.
+    quoteAmount: { type: Number, default: 1000 },
     devUrl: { type: String, default: null },
     deliveryStage: {
       type: String,
@@ -109,6 +109,10 @@ const prospectSchema = new Schema(
     rdvDate: { type: Date, default: null },
     paidAt: { type: Date, default: null },
     paidAmount: { type: Number, default: null },
+    // Figés à la réception du paiement, depuis le TTC réellement prélevé : la
+    // part du closer ne doit pas bouger si le prix ou la règle change ensuite.
+    paidAmountHt: { type: Number, default: null },
+    closerCommission: { type: Number, default: null },
     gcPaymentId: { type: String, default: null },
     qontoInvoiceId: { type: String, default: null },
     qontoInvoiceNumber: { type: String, default: null },

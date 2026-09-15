@@ -108,10 +108,10 @@ export async function PUT(
   const isAdmin = session.user.role === "admin";
   const updates = pickUpdatableFields(body, isAdmin);
 
-  // Les tarifs sont validés à part : un montant invalide doit être refusé, pas
+  // L'abonnement est validé à part : un montant invalide doit être refusé, pas
   // silencieusement écarté comme le fait pickUpdatableFields pour un champ
-  // inconnu. Réservés à l'admin, y compris sur son propre compte — un closer ne
-  // fixe pas son prix de vente.
+  // inconnu. Réservé à l'admin, y compris sur son propre compte. Le prix de
+  // création, lui, se fixe sur chaque fiche (PUT /api/prospects/[id]).
   if (isAdmin) {
     const pricing = pickPricingUpdates(body);
     if ("error" in pricing) {
