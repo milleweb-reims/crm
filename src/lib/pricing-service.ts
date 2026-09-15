@@ -1,4 +1,4 @@
-// Accès base pour les tarifs. La décision elle-même vit dans pricing.ts, sans
+// Accès base pour les prix. La décision elle-même vit dans pricing.ts, sans
 // dépendance à Mongoose, pour rester testable.
 
 import { connectDB } from "./db";
@@ -7,6 +7,7 @@ import {
   DEFAULT_PRICING,
   resolveProspectPricing,
   type HolderPricing,
+  type PricedProspect,
   type ProspectPricing,
 } from "./pricing";
 
@@ -16,20 +17,21 @@ async function findHolderPricing(
   await connectDB();
 
   return (await User.findById(holderId)
-    .select("quoteAmount subscriptionAmount")
+    .select("subscriptionAmount")
     .lean()) as HolderPricing | null;
 }
 
 /**
- * Tarifs applicables à une fiche, lus sur le compte qui la détient.
+ * Prix applicables à une fiche : son prix de création, et l'abonnement lu sur le
+ * compte qui la détient.
  *
- * @param assignedTo Le champ `assignedTo` de la fiche (ObjectId, document peuplé ou null)
+ * @param prospect La fiche, avec `quoteAmount` et `assignedTo` (ObjectId, document peuplé ou null)
  */
 export async function prospectPricing(
-  assignedTo: unknown
+  prospect: PricedProspect
 ): Promise<ProspectPricing> {
   try {
-    return await resolveProspectPricing(assignedTo, findHolderPricing);
+    return await resolveProspectPricing(prospect, findHolderPricing);
   } catch (error) {
     // Base injoignable : un lien de paiement ne doit pas échouer parce qu'un
     // tarif est illisible. Les défauts valent mieux qu'une erreur 500.

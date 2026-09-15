@@ -15,10 +15,10 @@ const userSchema = new Schema(
     },
     avatar: { type: String, default: "" },
     isActive: { type: Boolean, default: true },
-    // Tarifs pratiqués par ce compte, en euros HT. Posés sur tous les comptes et
-    // pas seulement les closers : un admin peut aussi détenir une fiche, et la
-    // résolution du prix n'a ainsi aucun cas particulier à traiter.
-    quoteAmount: { type: Number, default: 500 },
+    // Abonnement mensuel pratiqué par ce compte, en euros HT. Posé sur tous les
+    // comptes et pas seulement les closers : un admin peut aussi détenir une
+    // fiche, et la résolution n'a ainsi aucun cas particulier à traiter. Le prix
+    // de création, lui, se fixe sur chaque fiche.
     subscriptionAmount: { type: Number, default: 29 },
   },
   { timestamps: true }

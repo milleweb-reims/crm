@@ -41,6 +41,8 @@ interface LeaderboardEntry {
   readonly name: string;
   readonly sales: number;
   readonly ca: number;
+  /** Part reversée au closer sur ses ventes du mois (voir closerCommission). */
+  readonly commission: number;
   readonly rdv: number;
 }
 
@@ -49,7 +51,7 @@ interface LeaderboardEntry {
  * Combines data from both sources, with sales taking priority.
  */
 function mergeAggregates(
-  salesAgg: ReadonlyArray<{ _id: unknown; sales: number; ca: number }>,
+  salesAgg: ReadonlyArray<{ _id: unknown; sales: number; ca: number; commission: number }>,
   rdvAgg: ReadonlyArray<{ _id: unknown; rdv: number }>
 ): Map<string, LeaderboardEntry> {
   const rdvMap = new Map(
@@ -63,6 +65,7 @@ function mergeAggregates(
       name: "",
       sales: item.sales,
       ca: item.ca,
+      commission: item.commission,
       rdv: rdvMap.get(String(item._id)) ?? 0,
     }
   ] as const);
@@ -76,6 +79,7 @@ function mergeAggregates(
         name: "",
         sales: 0,
         ca: 0,
+        commission: 0,
         rdv,
       }
     ] as const);
@@ -123,6 +127,7 @@ async function buildLeaderboard(startOfMonth: Date): Promise<LeaderboardEntry[]>
           _id: "$assignedTo",
           sales: { $sum: 1 },
           ca: { $sum: { $ifNull: ["$paidAmount", 0] } },
+          commission: { $sum: { $ifNull: ["$closerCommission", 0] } },
         },
       },
     ]),
@@ -241,6 +246,7 @@ async function closerStats(userId: string) {
         $group: {
           _id: null,
           ca: { $sum: { $ifNull: ["$paidAmount", 0] } },
+          commission: { $sum: { $ifNull: ["$closerCommission", 0] } },
           sales: { $sum: 1 },
         },
       },
@@ -262,7 +268,8 @@ async function closerStats(userId: string) {
     salesThisMonth: myCaAgg[0]?.sales ?? 0,
     salesPrevMonth,
     caThisMonth: myCaAgg[0]?.ca ?? 0,
-    // Pas de CA global ni par closer pour les closers
+    commissionThisMonth: myCaAgg[0]?.commission ?? 0,
+    // Ni CA ni rémunération des autres closers pour un closer
     leaderboard: leaderboard.map(({ userId, name, sales }) => ({
       userId,
       name,

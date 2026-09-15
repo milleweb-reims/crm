@@ -891,6 +891,9 @@ export default function ProspectDetailPage() {
             prospect={prospect}
             onUpdated={fetchData}
             isAdmin={isAdmin}
+            // Le prix se fixe par le détenteur de la fiche ou un admin ; une
+            // fiche libre accepte le prix de qui la prend. Le serveur revérifie.
+            canEditPrice={isAdmin || !assignedId || assignedId === userId}
             className="h-full"
           />
         )}

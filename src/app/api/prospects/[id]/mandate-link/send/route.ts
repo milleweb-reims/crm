@@ -51,7 +51,7 @@ export async function POST(
     );
   }
 
-  const { subscriptionAmount } = await prospectPricing(prospect.assignedTo);
+  const { subscriptionAmount } = await prospectPricing(prospect);
   const monthlyTtc = `${ttcFromHt(subscriptionAmount).toLocaleString("fr-FR")} €`;
   const html = buildMandateLinkEmail(prospect.mandateLink, monthlyTtc);
 

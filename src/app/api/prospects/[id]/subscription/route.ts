@@ -48,9 +48,7 @@ export async function POST(
   }
 
   // Tarif du closer qui détient la fiche, toujours strictement positif.
-  const { subscriptionAmount: amountHt } = await prospectPricing(
-    prospect.assignedTo
-  );
+  const { subscriptionAmount: amountHt } = await prospectPricing(prospect);
 
   // Premier prélèvement un mois après la signature ; si cette date est déjà
   // passée (rattrapage tardif), GoCardless choisit la première date possible.

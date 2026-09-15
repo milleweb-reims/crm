@@ -13,7 +13,8 @@ import {
   parseGcDate,
   toLocalDateString,
 } from "@/lib/gocardless";
-import { ttcFromHt } from "@/lib/vat";
+import { htFromTtc, ttcFromHt } from "@/lib/vat";
+import { closerCommission } from "@/lib/pricing";
 
 type ProspectDoc = InstanceType<typeof Prospect> | null;
 
@@ -222,6 +223,12 @@ async function updatePaidFields(
   // prélevé. Aucun repli sur un tarif configuré : il ne dirait rien du montant
   // encaissé, et les factures Qonto s'appuient sur ce champ.
   prospect.paidAmount = details.amount ?? null;
+  // La part du closer se fige ici, depuis l'encaissement réel : ni le prix de
+  // la fiche ni le plancher ne doivent la réécrire après coup.
+  prospect.paidAmountHt =
+    details.amount === null ? null : htFromTtc(details.amount);
+  prospect.closerCommission =
+    prospect.paidAmountHt === null ? null : closerCommission(prospect.paidAmountHt);
   prospect.gcPaymentId = details.paymentId;
   prospect.status = "paye";
   await prospect.save();
@@ -378,9 +385,7 @@ async function handleMandateSigned(
   });
 
   // Tarif du closer qui détient la fiche, au moment de créer l'abonnement.
-  const { subscriptionAmount: amountHt } = await prospectPricing(
-    prospect.assignedTo
-  );
+  const { subscriptionAmount: amountHt } = await prospectPricing(prospect);
   // Premier prélèvement un mois après la signature, clampé en fin de mois
   const startDate = addOneMonthClamped(signedAt);
 

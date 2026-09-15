@@ -49,6 +49,8 @@ interface CloserStats {
   readonly salesThisMonth: number;
   readonly salesPrevMonth: number;
   readonly caThisMonth: number;
+  /** Part reversée au closer sur ses ventes du mois. */
+  readonly commissionThisMonth: number;
   readonly leaderboard: readonly LeaderboardEntry[];
   readonly todayReminders: number;
 }
@@ -180,7 +182,7 @@ function CloserDashboard({
           value={stats.salesThisMonth}
           change={percentChange(stats.salesThisMonth, stats.salesPrevMonth)}
           icon={CreditCard}
-          iconColor="text-green-500"
+          iconColor="text-primary"
           href={mine("paid=month")}
         />
       </div>
@@ -188,6 +190,13 @@ function CloserDashboard({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <ClosersLeaderboard entries={[...stats.leaderboard]} currentUserId={userId} />
         <div className="space-y-6">
+          <StatCard
+            title="Ma rémunération (ce mois)"
+            value={formatEuros(stats.commissionThisMonth)}
+            icon={Euro}
+            iconColor="text-green-500"
+            href={mine("paid=month")}
+          />
           <StatCard
             title="Mes prospects assignés"
             value={stats.myProspects}

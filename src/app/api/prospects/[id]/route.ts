@@ -10,6 +10,7 @@ import { sendEmail } from "@/lib/mailer";
 import { normalizeCity } from "@/lib/city";
 import { computeStatusChangeEffects } from "@/lib/prospect-status";
 import { prospectPricing } from "@/lib/pricing-service";
+import { quoteAmountUpdate } from "@/lib/pricing";
 import type { UserRole } from "@/types";
 
 interface RdvProspect {
@@ -331,10 +332,9 @@ export async function GET(
     );
   }
 
-  // Les tarifs ne sont pas stockés sur la fiche : ils sont résolus depuis son
-  // détenteur et joints à la réponse, pour que l'interface n'ait aucun prix à
-  // calculer de son côté.
-  const pricing = await prospectPricing(prospect.assignedTo);
+  // Prix effectifs joints à la réponse (prix de la fiche ramené au plancher si
+  // besoin, abonnement lu sur le détenteur) : l'interface n'a rien à calculer.
+  const pricing = await prospectPricing(prospect);
 
   return NextResponse.json({ ...prospect, pricing });
 }
@@ -369,6 +369,21 @@ export async function PUT(
 
   const lockError = validateProspectNotLocked(existing, session);
   if (lockError) return lockError;
+
+  // Le prix de création se fixe par le détenteur de la fiche ou un admin, jamais
+  // sous le plancher, et plus du tout une fois la fiche payée.
+  const quoteResult = quoteAmountUpdate({
+    body: updates,
+    existing,
+    user: session.user,
+  });
+  if ("error" in quoteResult) {
+    return NextResponse.json(
+      { error: quoteResult.error },
+      { status: quoteResult.status }
+    );
+  }
+  updates = quoteResult.updates;
 
   const assignedToResult = await processAssignedToField({
     body: updates,

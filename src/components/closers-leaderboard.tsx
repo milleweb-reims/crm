@@ -6,6 +6,8 @@ export interface LeaderboardEntry {
   name: string;
   sales: number;
   ca?: number;
+  /** Part reversée au closer ce mois. */
+  commission?: number;
   rdv?: number;
 }
 
@@ -60,8 +62,18 @@ export function ClosersLeaderboard({
                 {entry.sales} vente{entry.sales > 1 ? "s" : ""}
               </span>
               {showCa && entry.ca !== undefined && (
-                <span className="w-20 text-right text-sm font-semibold text-green-600">
-                  {entry.ca.toLocaleString("fr-FR")} €
+                <span className="w-20 shrink-0 text-right">
+                  <span className="block text-sm font-semibold text-green-600">
+                    {entry.ca.toLocaleString("fr-FR")} €
+                  </span>
+                  {entry.commission !== undefined && (
+                    <span
+                      className="block text-xs text-muted-foreground"
+                      title="Rémunération du closer : tout ce qui dépasse 1 000 € HT par vente"
+                    >
+                      dont {entry.commission.toLocaleString("fr-FR")} €
+                    </span>
+                  )}
                 </span>
               )}
             </li>

@@ -54,7 +54,7 @@ export async function POST(
     );
   }
 
-  const { quoteAmount } = await prospectPricing(prospect.assignedTo);
+  const { quoteAmount } = await prospectPricing(prospect);
   const amount = formatPaymentAmount(quoteAmount);
   const html = buildPaymentLinkEmail(prospect.paymentLink, amount);
 
